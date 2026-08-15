@@ -1,0 +1,45 @@
+/** Plugin configuration: composition `config` provides the base layer, the settings page writes overrides. */
+import z from '@deepseek-ai/schemastery';
+export interface Config {
+    /** Master switch: extraction, consolidation, and injection. */
+    enabled: boolean;
+    /** Memory root directory; empty resolves to `$DSH_HOME/memories` (or `~/.dsh/memories`). */
+    memoryRoot: string;
+    /** Optional dedicated LLM route for the memory pipeline; empty uses the deployment default model. */
+    provider: string;
+    model: string;
+    /** Debounce delay between a root session turn stopping and the extraction run. */
+    idleDebounceMs: number;
+    /** Sessions extracted per pipeline run. */
+    maxRolloutsPerRun: number;
+    /** Parallel extraction workers. */
+    extractionConcurrency: number;
+    /** Sessions with fewer rendered events are skipped as no-op. */
+    minSessionEvents: number;
+    /** Sessions older than this many days are marked no-op instead of extracted. */
+    maxRolloutAgeDays: number;
+    /** Hard cap on the rendered transcript sent to the extraction model. */
+    maxTranscriptChars: number;
+    /** Output token cap for one Phase 1 extraction call. */
+    phase1MaxTokens: number;
+    /** Cooldown between automatic Phase 2 consolidations. */
+    consolidationCooldownMs: number;
+    /** Hard cap on raw memories fed into one consolidation call. */
+    maxRawChars: number;
+    /** Output token cap for one Phase 2 consolidation call. */
+    phase2MaxTokens: number;
+    /** Hard cap on the memory summary injected into the system prompt. */
+    maxSummaryChars: number;
+    /** Extraction attempts before a session is permanently failed. */
+    retryLimit: number;
+}
+export declare const DEFAULTS: Config;
+export declare const Config: z<Config>;
+/** Merge composition base and runtime overrides over schema defaults. */
+export declare function resolveConfig(base?: Partial<Config>, overrides?: Partial<Config>): Config;
+/** Whitelisted keys the settings page may override, with safe range clamps. */
+export declare const OVERRIDABLE_KEYS: readonly ["enabled", "provider", "model", "idleDebounceMs", "maxRolloutsPerRun", "extractionConcurrency", "minSessionEvents", "maxRolloutAgeDays", "maxTranscriptChars", "phase1MaxTokens", "consolidationCooldownMs", "maxRawChars", "phase2MaxTokens", "maxSummaryChars", "retryLimit"];
+export type OverridableKey = (typeof OVERRIDABLE_KEYS)[number];
+/** Validate and clamp one settings-page override patch. */
+export declare function clampOverrides(patch: Record<string, unknown>): Partial<Config>;
+//# sourceMappingURL=config.d.ts.map
