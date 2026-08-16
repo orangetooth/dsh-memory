@@ -196,6 +196,10 @@ export function registerRpc(webServer: WebServerRuntime, deps: RpcDeps): () => v
           result = { providers: await listProviders(deps) }
         } else if (method === 'list-models') {
           result = { models: await listModels(deps, typeof args.provider === 'string' ? args.provider : '') }
+        } else if (method === 'reset-failures') {
+          const reset = deps.state.resetFailedClaims()
+          await deps.runPipeline()
+          result = { reset, state: await statePayload(deps) }
         } else {
           res.writeHead(404, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, message: `unknown method: ${String(method)}` }))

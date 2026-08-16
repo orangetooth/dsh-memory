@@ -27,6 +27,15 @@ export declare class MemoryFiles {
     uniqueRolloutSlug(slug: string, sessionId: string): Promise<string>;
     listTree(subPath?: string): Promise<FileEntry[]>;
     rolloutIndex(limit?: number): Promise<string[]>;
+    /** Unconsumed ad hoc notes awaiting the next consolidation. */
+    pendingNotes(): Promise<Array<{
+        path: string;
+        content: string;
+    }>>;
+    /** Whether any unconsumed ad hoc note is waiting. */
+    hasPendingNotes(): Promise<boolean>;
+    /** Move a consumed note into the ad hoc archive (successful consolidation only). */
+    archiveNote(path: string): Promise<void>;
     stats(): Promise<{
         summaryChars: number;
         memoryChars: number;

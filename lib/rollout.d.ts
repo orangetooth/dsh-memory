@@ -16,6 +16,7 @@ export interface SelectionOptions {
     maxAgeDays: number;
     maxPerRun: number;
     retryLimit: number;
+    recheckIntervalMs: number;
 }
 export interface SelectionResult {
     candidates: SessionHeaderLite[];

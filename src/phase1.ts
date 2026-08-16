@@ -4,18 +4,19 @@ import type { MemoryStateStore } from './bookkeeping.js'
 import type { Config } from './config.js'
 import type { MemoryFiles } from './files.js'
 import type { LlmRuntime, ModelRoute } from './llm.js'
-import { collectTextDetails, extractJsonObject, generateOptions, LlmCallError } from './llm.js'
+import { collectResponse, extractJsonObject, generateOptions, parseCallArguments } from './llm.js'
 import { sanitizeSlug } from './paths.js'
-import { PHASE1_SYSTEM, phase1User } from './prompts.js'
+import { PHASE1_SYSTEM, PHASE1_TOOL, phase1User } from './prompts.js'
 import { redactSecrets, renderTranscript, selectCandidates } from './rollout.js'
 import type { SessionHeaderLite, SessionReader } from './types.js'
-import { messageOf } from './util.js'
+import { headTail, messageOf } from './util.js'
 
 export interface Phase1Summary {
   selected: number
   done: number
   noop: number
   failed: number
+  unchanged: number
   skippedNoRoute: boolean
   skippedNoSessions: boolean
 }
@@ -38,12 +39,20 @@ interface ExtractFields {
   rolloutSlug: string
 }
 
-function rolloutFrontmatter(header: SessionHeaderLite): string {
+type ExtractOutcome = 'done' | 'noop' | 'failed' | 'unchanged'
+
+interface EventWithSeq {
+  seq?: unknown
+}
+
+function rolloutFrontmatter(header: SessionHeaderLite, part?: number, baseSlug?: string): string {
   const lines = [
     '<!--',
     `  session: ${header.id}`,
     header.cwd === undefined ? '' : `  cwd: ${header.cwd}`,
     `  processed_at: ${new Date().toISOString()}`,
+    part === undefined ? '' : `  part: ${part}`,
+    baseSlug === undefined ? '' : `  part_of: ${baseSlug}`,
     '-->',
     '',
   ]
@@ -73,9 +82,13 @@ export class Phase1Runner {
     const { state, files, config } = this.deps
     await files.ensureLayout()
     const reader = this.deps.sessions()
-    if (reader === undefined) return { selected: 0, done: 0, noop: 0, failed: 0, skippedNoRoute: false, skippedNoSessions: true }
+    if (reader === undefined) {
+      return { selected: 0, done: 0, noop: 0, failed: 0, unchanged: 0, skippedNoRoute: false, skippedNoSessions: true }
+    }
     const route = this.deps.route()
-    if (route === undefined) return { selected: 0, done: 0, noop: 0, failed: 0, skippedNoRoute: true, skippedNoSessions: false }
+    if (route === undefined) {
+      return { selected: 0, done: 0, noop: 0, failed: 0, unchanged: 0, skippedNoRoute: true, skippedNoSessions: false }
+    }
     const clock = this.deps.now ?? Date.now
     const cfg = config()
     const headers = await reader.listSessions()
@@ -84,11 +97,13 @@ export class Phase1Runner {
       maxAgeDays: cfg.maxRolloutAgeDays,
       maxPerRun: cfg.maxRolloutsPerRun,
       retryLimit: cfg.retryLimit,
+      recheckIntervalMs: cfg.recheckIntervalMs,
     })
     for (const header of selection.stale) state.claimNoop(header.id)
     let done = 0
     let noop = 0
     let failed = 0
+    let unchanged = 0
     let index = 0
     const workers = Array.from({ length: Math.max(1, cfg.extractionConcurrency) }, async () => {
       while (index < selection.candidates.length) {
@@ -96,55 +111,76 @@ export class Phase1Runner {
         const outcome = await this.extractOne(header, route, cfg)
         if (outcome === 'done') done += 1
         else if (outcome === 'noop') noop += 1
+        else if (outcome === 'unchanged') unchanged += 1
         else failed += 1
       }
     })
     await Promise.all(workers)
     if (done > 0) state.setPendingConsolidation(true)
     state.recordPhase1(clock())
-    return { selected: selection.candidates.length, done, noop, failed, skippedNoRoute: false, skippedNoSessions: false }
+    return {
+      selected: selection.candidates.length,
+      done,
+      noop,
+      failed,
+      unchanged,
+      skippedNoRoute: false,
+      skippedNoSessions: false,
+    }
   }
 
   private async extractOne(
     header: SessionHeaderLite,
     route: ModelRoute,
     cfg: Config,
-  ): Promise<'done' | 'noop' | 'failed'> {
-    const { state, files, llm } = this.deps
+  ): Promise<ExtractOutcome> {
+    const { state, files } = this.deps
+    const previous = state.processedOf(header.id)
     state.claimRunning(header.id)
     try {
       const reader = this.deps.sessions()
       if (reader === undefined) throw new Error('session reader unavailable')
       const log = await reader.readSession(header.id)
-      const rendered = renderTranscript(log.events, { maxTranscriptChars: cfg.maxTranscriptChars })
+      const events = log.events as EventWithSeq[]
+      const lastSeq = previous?.lastSeq
+      const deltaEvents = lastSeq === undefined
+        ? events
+        : events.filter(event => typeof event.seq === 'number' && event.seq > lastSeq)
+      const maxSeq = events.reduce((max, event) => (typeof event.seq === 'number' && event.seq > max ? event.seq : max), -1)
+      const rendered = renderTranscript(deltaEvents, { maxTranscriptChars: cfg.maxTranscriptChars })
+
+      if (previous !== undefined && previous.status !== 'failed') {
+        // Incremental path: the session was already extracted before.
+        if (previous.status === 'done' && lastSeq === undefined) {
+          // Legacy done claim from before watermarks: baseline only, no duplicate extraction.
+          state.claimUnchanged(header.id, maxSeq)
+          return 'unchanged'
+        }
+        if (rendered.eventCount < cfg.minDeltaEvents || rendered.text.trim() === '') {
+          state.claimUnchanged(header.id, Math.max(lastSeq ?? -1, maxSeq))
+          return 'unchanged'
+        }
+        const fields = await this.callExtract(header, route, cfg, rendered.text, true)
+        if (fields.rawMemory === '' && fields.rolloutSummary === '') {
+          state.claimUnchanged(header.id, maxSeq)
+          return 'unchanged'
+        }
+        const base = previous.slug ?? sanitizeSlug(fields.rolloutSlug, `session-${header.id.slice(-8)}`)
+        const part = previous.slug === undefined ? 1 : (previous.parts ?? 0) + 1
+        const slugBase = previous.slug === undefined ? base : `${base}-part${part}`
+        const slug = await files.uniqueRolloutSlug(slugBase, header.id)
+        await files.writeAtomic(`rollout_summaries/${slug}.md`, rolloutFrontmatter(header, part, base) + fields.rolloutSummary.trimEnd() + '\n')
+        await files.appendText('raw_memories.md', rawBlock(header, slug) + fields.rawMemory.trimEnd() + '\n\n')
+        state.claimDone(header.id, slug, maxSeq, part)
+        return 'done'
+      }
+
+      // First extraction (new session or a failed claim being retried).
       if (rendered.eventCount < cfg.minSessionEvents || rendered.text.trim() === '') {
         state.claimNoop(header.id)
         return 'noop'
       }
-      const userText = phase1User(
-        {
-          sessionId: header.id,
-          ...(header.cwd === undefined ? {} : { cwd: header.cwd }),
-          ...(header.createdAt === undefined ? {} : { createdAt: header.createdAt }),
-        },
-        rendered.text,
-      )
-      const response = await collectTextDetails(
-        llm,
-        generateOptions(route, PHASE1_SYSTEM, userText, cfg.phase1MaxTokens),
-        40_000,
-      )
-      let raw: Record<string, unknown>
-      try {
-        // A truncated but structurally complete JSON response is still usable.
-        raw = extractJsonObject(response.text)
-      } catch (jsonError: unknown) {
-        if (response.truncated) {
-          throw new LlmCallError('max-tokens', `output truncated and JSON incomplete: ${messageOf(jsonError)}`)
-        }
-        throw jsonError
-      }
-      const fields = this.normalizeFields(raw)
+      const fields = await this.callExtract(header, route, cfg, rendered.text, false)
       if (fields.rawMemory === '' && fields.rolloutSummary === '') {
         state.claimNoop(header.id)
         return 'noop'
@@ -155,11 +191,61 @@ export class Phase1Runner {
       )
       await files.writeAtomic(`rollout_summaries/${slug}.md`, rolloutFrontmatter(header) + fields.rolloutSummary.trimEnd() + '\n')
       await files.appendText('raw_memories.md', rawBlock(header, slug) + fields.rawMemory.trimEnd() + '\n\n')
-      state.claimDone(header.id, slug)
+      state.claimDone(header.id, slug, maxSeq, 1)
       return 'done'
     } catch (error: unknown) {
       state.claimFailed(header.id, `${messageOf(error)} (route=${route.provider}/${route.model})`)
       return 'failed'
+    }
+  }
+
+  /**
+   * One extraction call: structured tool call preferred, text-JSON fallback,
+   * and a single halved-input retry when the output was truncated.
+   */
+  private async callExtract(
+    header: SessionHeaderLite,
+    route: ModelRoute,
+    cfg: Config,
+    transcript: string,
+    delta: boolean,
+  ): Promise<ExtractFields> {
+    const { llm } = this.deps
+    const meta = {
+      sessionId: header.id,
+      ...(header.cwd === undefined ? {} : { cwd: header.cwd }),
+      ...(header.createdAt === undefined ? {} : { createdAt: header.createdAt }),
+    }
+    const extract = async (text: string): Promise<ExtractFields> => {
+      const response = await collectResponse(
+        llm,
+        generateOptions(route, PHASE1_SYSTEM, phase1User(meta, text, delta), cfg.phase1MaxTokens, undefined, [PHASE1_TOOL]),
+        80_000,
+      )
+      let raw: Record<string, unknown>
+      const toolCall = response.calls.find(call => call.name === 'memory_save')
+      if (toolCall !== undefined) {
+        raw = parseCallArguments(toolCall)
+      } else {
+        try {
+          // Fallback: a model that ignored the tool still gets its text parsed.
+          raw = extractJsonObject(response.text)
+        } catch (jsonError: unknown) {
+          if (response.truncated) {
+            throw new Error(`output truncated and result incomplete: ${messageOf(jsonError)}`)
+          }
+          throw jsonError
+        }
+      }
+      return this.normalizeFields(raw)
+    }
+    try {
+      return await extract(transcript)
+    } catch (error: unknown) {
+      if (messageOf(error).includes('truncated') && transcript.length > 15_000) {
+        return await extract(headTail(transcript, Math.floor(transcript.length / 2)))
+      }
+      throw error
     }
   }
 

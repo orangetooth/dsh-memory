@@ -13,6 +13,10 @@ export interface SessionClaim {
   slug?: string
   /** Last failure message for diagnosis. */
   error?: string
+  /** Highest event seq already captured; later growth becomes a delta extraction. */
+  lastSeq?: number
+  /** Number of rollout parts already written for this session. */
+  parts?: number
 }
 
 /** Durable plugin state persisted through the storage hub KV backend. */

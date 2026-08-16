@@ -179,6 +179,43 @@ function MemorySettings(): React.ReactNode {
     }
   }
 
+  /** 立即提取：把本轮实际处理结果如实展示出来，而不是一句笼统的"完成"。 */
+  const runPhase1 = async (): Promise<void> => {
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await rpc('run-phase1')
+      const summary = (result.phase1 ?? {}) as { selected?: number; done?: number; noop?: number; failed?: number; unchanged?: number }
+      const phase2 = result.phase2 as { kind?: string; mode?: string; reason?: string } | null
+      await refresh()
+      const selected = Number(summary.selected ?? 0)
+      const done = Number(summary.done ?? 0)
+      const noop = Number(summary.noop ?? 0)
+      const failed = Number(summary.failed ?? 0)
+      const unchanged = Number(summary.unchanged ?? 0)
+      let text: string
+      if (selected === 0) {
+        text = `本轮没有待提取的会话：所有历史会话都已有处理记录（成功、跳过或待重试）。如需重试失败的会话，用「重试失败会话」按钮。`
+      } else {
+        text = `本轮处理 ${selected} 个会话：${done} 新提取、${noop} 跳过、${unchanged} 无新增内容、${failed} 失败。`
+      }
+      if (phase2 !== null && phase2 !== undefined) {
+        text += phase2.kind === 'consolidated'
+          ? ` 随后整合已执行（${phase2.mode === 'init' ? '初次创建' : '增量合并'}）。`
+          : phase2.kind === 'error'
+            ? ' 随后整合失败（15 分钟内自动重试）。'
+            : phase2.kind === 'skipped'
+              ? ` 随后整合未执行（${phase2.reason}）。`
+              : ''
+      }
+      setNotice({ kind: 'ok', text })
+    } catch (error) {
+      setNotice({ kind: 'err', text: `操作失败：${error instanceof Error ? error.message : String(error)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const save = (): void => {
     void call('set-config', {
       enabled: form.enabled === true,
@@ -262,8 +299,11 @@ function MemorySettings(): React.ReactNode {
         ? null
         : el('p', { className: 'dm-warn' }, `上次整合失败：${pipeline.phase2Error}`),
       el('div', { className: 'dm-row' },
-        el('button', { className: 'dm-btn primary', disabled: busy, onClick: () => { void call('run-phase1', {}, '提取完成。') } }, '立即提取'),
+        el('button', { className: 'dm-btn primary', disabled: busy, onClick: () => { void runPhase1() } }, '立即提取'),
         el('button', { className: 'dm-btn primary', disabled: busy, onClick: () => { void call('run-phase2', {}, '整合完成。') } }, '立即整合'),
+        payload.counts.failed > 0
+          ? el('button', { className: 'dm-btn secondary', disabled: busy, onClick: () => { void call('reset-failures', {}, '失败会话已重新入队并触发重试。') } }, `重试失败会话（${payload.counts.failed}）`)
+          : null,
         el('button', { className: 'dm-btn secondary', disabled: busy, onClick: () => { void call('get-state').then(() => setNotice({ kind: 'ok', text: '已刷新。' })).catch(() => {}) } }, '刷新'),
         el('span', { className: 'dm-dimmed' }, `当前路由：${routeLabel}`)),
     ),

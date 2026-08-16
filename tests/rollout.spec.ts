@@ -70,8 +70,10 @@ describe('renderTranscript', () => {
 
 describe('selectCandidates', () => {
   const now = 1_700_000_000_000
+  const RECHECK = 30 * 60_000
   const header = (id: string, createdAt = now, extra: Partial<SessionHeaderLite> = {}): SessionHeaderLite =>
     ({ id, createdAt, ...extra })
+  const options = (maxPerRun = 10) => ({ now: () => now, maxAgeDays: 30, maxPerRun, retryLimit: 3, recheckIntervalMs: RECHECK })
 
   it('filters subagents, processed sessions, and running claims', () => {
     const headers = [
@@ -84,9 +86,7 @@ describe('selectCandidates', () => {
       done: { status: 'done', at: now, attempts: 1 },
       running: { status: 'running', at: now, attempts: 1 },
     }
-    const result = selectCandidates(headers, id => claims[id], {
-      now: () => now, maxAgeDays: 30, maxPerRun: 10, retryLimit: 3,
-    })
+    const result = selectCandidates(headers, id => claims[id], options())
     expect(result.candidates.map(c => c.id)).toEqual(['fresh'])
   })
 
@@ -98,9 +98,7 @@ describe('selectCandidates', () => {
       header('n3', now - 3_000),
       header('n4', now - 4_000),
     ]
-    const result = selectCandidates(headers, () => undefined, {
-      now: () => now, maxAgeDays: 30, maxPerRun: 3, retryLimit: 3,
-    })
+    const result = selectCandidates(headers, () => undefined, options(3))
     expect(result.stale.map(c => c.id)).toEqual(['old'])
     expect(result.candidates.map(c => c.id)).toEqual(['n1', 'n2', 'n3'])
   })
@@ -108,10 +106,37 @@ describe('selectCandidates', () => {
   it('retries failed sessions with backoff and gives up at the retry limit', () => {
     const headers = [header('s1')]
     const recently = { status: 'failed', at: now - 1_000, attempts: 1 }
-    expect(selectCandidates(headers, () => recently, { now: () => now, maxAgeDays: 30, maxPerRun: 10, retryLimit: 3 }).candidates).toHaveLength(0)
+    expect(selectCandidates(headers, () => recently, options()).candidates).toHaveLength(0)
     const later = { status: 'failed', at: now - 5 * 60_000, attempts: 1 }
-    expect(selectCandidates(headers, () => later, { now: () => now, maxAgeDays: 30, maxPerRun: 10, retryLimit: 3 }).candidates).toHaveLength(1)
+    expect(selectCandidates(headers, () => later, options()).candidates).toHaveLength(1)
     const exhausted = { status: 'failed', at: now - 5 * 60_000, attempts: 3 }
-    expect(selectCandidates(headers, () => exhausted, { now: () => now, maxAgeDays: 30, maxPerRun: 10, retryLimit: 3 }).candidates).toHaveLength(0)
+    expect(selectCandidates(headers, () => exhausted, options()).candidates).toHaveLength(0)
+  })
+
+  it('re-queues done/noop sessions for recheck after the interval, after fresh sessions', () => {
+    const headers = [
+      header('fresh', now - 1_000),
+      header('old-done', now - 2_000),
+      header('old-noop', now - 3_000),
+      header('recent-done', now - 4_000),
+    ]
+    const claims: Record<string, SessionClaim> = {
+      'old-done': { status: 'done', at: now - 2 * RECHECK, attempts: 1, lastSeq: 5 },
+      'old-noop': { status: 'noop', at: now - 3 * RECHECK, attempts: 1, lastSeq: 2 },
+      'recent-done': { status: 'done', at: now - 60_000, attempts: 1, lastSeq: 9 },
+    }
+    const result = selectCandidates(headers, id => claims[id], options())
+    // Fresh first, then longest-unrechecked; the recent claim stays parked.
+    expect(result.candidates.map(c => c.id)).toEqual(['fresh', 'old-noop', 'old-done'])
+  })
+
+  it('stops rechecking sessions past the age window', () => {
+    const headers = [header('old-done', now - 40 * 86_400_000)]
+    const claims: Record<string, SessionClaim> = {
+      'old-done': { status: 'done', at: now - 2 * RECHECK, attempts: 1, lastSeq: 5 },
+    }
+    const result = selectCandidates(headers, id => claims[id], options())
+    expect(result.candidates).toHaveLength(0)
+    expect(result.stale).toHaveLength(0)
   })
 })

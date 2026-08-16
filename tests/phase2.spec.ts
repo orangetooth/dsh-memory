@@ -80,6 +80,23 @@ describe('Phase2Runner', () => {
     expect(summary?.startsWith('v1\n')).toBe(true)
   })
 
+  it('accepts a structured memory_write tool call', async () => {
+    const h = await harness([{
+      calls: [{ name: 'memory_write', arguments: JSON.stringify({
+        memory_md: '# Memory\n\n## User preferences\n\n- 工具路径偏好',
+        memory_summary_md: 'v1\n- 主题：工具路径',
+      }) }],
+    }])
+    await h.files.appendText('raw_memories.md', 'raw\n')
+    h.state.setPendingConsolidation(true)
+
+    const outcome = await h.runner.run(false)
+    expect(outcome).toEqual({ kind: 'consolidated', mode: 'init' })
+    expect(await h.files.readIfExists('MEMORY.md')).toContain('工具路径偏好')
+    expect((await h.files.readIfExists('memory_summary.md'))?.startsWith('v1\n')).toBe(true)
+    expect(h.state.pendingConsolidation).toBe(false)
+  })
+
   it('merges in INCREMENTAL mode when files already exist', async () => {
     const h = await harness([PHASE2_BLOCKS('# Memory\n\n- old entry\n- merged entry', 'v1\n- topic one\n- topic two')])
     await h.files.writeAtomic('MEMORY.md', '# Memory\n\n- old entry\n')
@@ -91,6 +108,30 @@ describe('Phase2Runner', () => {
     expect(outcome).toEqual({ kind: 'consolidated', mode: 'incremental' })
     const memory = await h.files.readIfExists('MEMORY.md')
     expect(memory).toContain('merged entry')
+  })
+
+  it('feeds ad hoc notes into consolidation and archives them on success', async () => {
+    const { llm, calls } = fakeLlm([PHASE2_BLOCKS('# Memory\n\n- note merged', 'v1\n- note merged')])
+    root = await mkdtemp(join(tmpdir(), 'dsh-memory-phase2-'))
+    const { facility } = fakeKv()
+    const state = new MemoryStateStore(() => facility)
+    await state.init()
+    const files = new MemoryFiles(root)
+    await files.ensureLayout()
+    const cfg = resolveConfig({ provider: 'mock', model: 'mock' })
+    const runner = new Phase2Runner({ llm, state, files, config: () => cfg, route: () => ({ provider: 'mock', model: 'mock' }) })
+
+    await files.writeAtomic('extensions/ad_hoc/notes/note-1.md', '<!-- ad-hoc note -->\n用户自述：交流必须使用中文，解释要口语化。\n')
+    // raw empty + note present: must still consolidate, not skip.
+    const outcome = await runner.run(false)
+    expect(outcome.kind).toBe('consolidated')
+
+    const userText = String(calls[0]?.messages[0]?.content[0]?.type === 'text' ? calls[0].messages[0].content[0].text : '')
+    expect(userText).toContain('用户自述：交流必须使用中文')
+    // The consumed note moved to the archive.
+    expect(await files.readIfExists('extensions/ad_hoc/notes/note-1.md')).toBeUndefined()
+    expect(await files.readIfExists('extensions/ad_hoc/archive/note-1.md')).toContain('用户自述')
+    expect(await files.hasPendingNotes()).toBe(false)
   })
 
   it('honors the cooldown and skips with no pending input', async () => {

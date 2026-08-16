@@ -17,10 +17,26 @@ export interface CollectedText {
     /** True when the finish reason was max-tokens: the response may be truncated. */
     truncated: boolean;
 }
+/** One tool call produced by the model, with raw JSON arguments. */
+export interface CollectedCall {
+    name: string;
+    arguments: string;
+}
+export interface CollectedResponse extends CollectedText {
+    /** Tool calls produced by the model (tool-call blocks plus deltas). */
+    calls: CollectedCall[];
+}
+/**
+ * Collect a full streaming response: text plus tool calls.
+ * Truncation (max-tokens) is reported rather than thrown.
+ */
+export declare function collectResponse(runtime: LlmRuntime, options: GenerateOptions, maxChars?: number): Promise<CollectedResponse>;
 /** Collect a full text response; reports max-tokens truncation instead of throwing. */
 export declare function collectTextDetails(runtime: LlmRuntime, options: GenerateOptions, maxChars?: number): Promise<CollectedText>;
 /** Collect a full text response, failing on any abnormal finish including truncation. */
 export declare function collectText(runtime: LlmRuntime, options: GenerateOptions, maxChars?: number): Promise<string>;
+/** Parse the raw JSON arguments of one collected tool call. */
+export declare function parseCallArguments(call: CollectedCall | undefined): Record<string, unknown>;
 /** Strip a ```json fence when present. */
 export declare function stripFences(text: string): string;
 /** Extract the first balanced top-level JSON object from model output. */
@@ -32,5 +48,9 @@ export declare function pickBlock(blocks: ReadonlyMap<string, string>, labels: r
 /** Resolve the pipeline's model route: explicit config first, then the deployment default. */
 export declare function resolveRoute(config: Config, defaultSelection: unknown): ModelRoute | undefined;
 /** Build a plugin-owned GenerateOptions for one pipeline call. */
-export declare function generateOptions(route: ModelRoute, system: string, userText: string, maxTokens: number, signal?: AbortSignal): GenerateOptions;
+export declare function generateOptions(route: ModelRoute, system: string, userText: string, maxTokens: number, signal?: AbortSignal, tools?: ReadonlyArray<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+}>): GenerateOptions;
 //# sourceMappingURL=llm.d.ts.map

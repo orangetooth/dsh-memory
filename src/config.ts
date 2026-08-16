@@ -18,6 +18,10 @@ export interface Config {
   extractionConcurrency: number
   /** Sessions with fewer rendered events are skipped as no-op. */
   minSessionEvents: number
+  /** Already-processed sessions are re-checked for growth no more often than this. */
+  recheckIntervalMs: number
+  /** Minimum new rendered events a grown session needs before a delta extraction. */
+  minDeltaEvents: number
   /** Sessions older than this many days are marked no-op instead of extracted. */
   maxRolloutAgeDays: number
   /** Hard cap on the rendered transcript sent to the extraction model. */
@@ -45,6 +49,8 @@ export const DEFAULTS: Config = {
   maxRolloutsPerRun: 3,
   extractionConcurrency: 1,
   minSessionEvents: 4,
+  recheckIntervalMs: 30 * 60_000,
+  minDeltaEvents: 6,
   maxRolloutAgeDays: 30,
   maxTranscriptChars: 60_000,
   phase1MaxTokens: 4_096,
@@ -64,6 +70,8 @@ export const Config: z<Config> = z.object({
   maxRolloutsPerRun: z.number().default(DEFAULTS.maxRolloutsPerRun),
   extractionConcurrency: z.number().default(DEFAULTS.extractionConcurrency),
   minSessionEvents: z.number().default(DEFAULTS.minSessionEvents),
+  recheckIntervalMs: z.number().default(DEFAULTS.recheckIntervalMs),
+  minDeltaEvents: z.number().default(DEFAULTS.minDeltaEvents),
   maxRolloutAgeDays: z.number().default(DEFAULTS.maxRolloutAgeDays),
   maxTranscriptChars: z.number().default(DEFAULTS.maxTranscriptChars),
   phase1MaxTokens: z.number().default(DEFAULTS.phase1MaxTokens),

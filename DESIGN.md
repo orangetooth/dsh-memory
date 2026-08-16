@@ -85,8 +85,35 @@ when the KV backend is unavailable the store degrades to process-local state.
 - Phase 1 selects root sessions only (subagent sessions excluded), skips processed ones, ages
   out sessions older than `maxRolloutAgeDays`, extracts with bounded concurrency, then sets
   `pendingConsolidation`.
-- Phase 2 runs after any successful extraction or pending flag, subject to the cooldown;
-  failures record `phase2Error` and retry on the next scheduled window or manually.
+- Phase 2 runs after any successful extraction, pending flag, or unconsumed ad hoc notes,
+  subject to the cooldown; failures record `phase2Error` and retry on the next scheduled window
+  or manually.
+
+### Incremental extraction
+
+Sessions grow after their first extraction, so claims carry a `lastSeq` watermark. A processed
+session is re-checked no more often than `recheckIntervalMs` (default 30 min); when its log grew
+by at least `minDeltaEvents` new rendered events, the delta is extracted into a new rollout part
+(`<slug>-partN`) and appended to the raw queue. Legacy `noop` claims without a watermark get one
+full re-extraction; legacy `done` claims only get their watermark baselined (their content is
+already consolidated). The model input for a delta states explicitly that earlier content was
+already processed.
+
+### Structured tool-constrained output
+
+Both phases constrain model output through the native function-calling channel
+(`GenerateOptions.tools`): Phase 1 must call `memory_save` with `raw_memory`,
+`rollout_summary`, `rollout_slug`; Phase 2 must call `memory_write` with `memory_md` and
+`memory_summary_md`. The plugin writes files itself; the model only fills structured arguments.
+Free-text parsing remains as a fallback for models that ignore tool schemas. Phase 1 also
+retries once with a halved transcript when output is truncated.
+
+### Ad hoc notes
+
+`memory_add` writes user-requested notes into `extensions/ad_hoc/notes/`; Phase 2 feeds every
+unconsumed note into consolidation as the highest-priority evidence source (user self-reports
+outrank inferred facts, and conflicting evidence is preserved with attribution on both sides).
+Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful consolidation.
 
 ## Security invariants
 

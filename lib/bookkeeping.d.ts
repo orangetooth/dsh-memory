@@ -43,7 +43,9 @@ export declare class MemoryStateStore {
     snapshot(): MemoryState;
     processedOf(id: string): SessionClaim | undefined;
     claimRunning(id: string): void;
-    claimDone(id: string, slug?: string): void;
+    claimDone(id: string, slug?: string, lastSeq?: number, parts?: number): void;
+    /** Re-check touched a claim but nothing new was worth extracting. */
+    claimUnchanged(id: string, lastSeq: number): void;
     claimNoop(id: string): void;
     claimFailed(id: string, error: string): void;
     get pendingConsolidation(): boolean;
@@ -53,6 +55,8 @@ export declare class MemoryStateStore {
     recordPhase1(at: number): void;
     recordPhase2(at: number, error?: string): void;
     setOverrides(overrides: Partial<Config>): void;
+    /** Re-queue every failed claim so the next pipeline run retries them. */
+    resetFailedClaims(): number;
     flush(): Promise<void>;
     dispose(): Promise<void>;
 }

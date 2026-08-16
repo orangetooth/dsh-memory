@@ -138,6 +138,7 @@ export interface SelectionOptions {
   maxAgeDays: number
   maxPerRun: number
   retryLimit: number
+  recheckIntervalMs: number
 }
 
 export interface SelectionResult {
@@ -163,22 +164,33 @@ export function selectCandidates(
   const now = options.now()
   const ageLimit = options.maxAgeDays * 86_400_000
   const candidates: SessionHeaderLite[] = []
+  const rechecks: SessionHeaderLite[] = []
   const stale: SessionHeaderLite[] = []
   for (const header of headers) {
     if (header.origin === 'subagent') continue
     const claim = claimOf(header.id)
     if (claim !== undefined) {
-      if (claim.status === 'done' || claim.status === 'noop') continue
+      if (claim.status === 'done' || claim.status === 'noop') {
+        // Already processed: revisit only after the recheck interval so a
+        // session that kept working gets its growth extracted as a delta.
+        if (claim.at === undefined || now - claim.at < options.recheckIntervalMs) continue
+        const createdAt = header.createdAt ?? 0
+        if (createdAt > 0 && now - createdAt > ageLimit) continue
+        rechecks.push(header)
+        continue
+      }
       if (claim.status === 'running') continue
       if (claim.status === 'failed' && (claim.attempts >= options.retryLimit || now - claim.at < backoffMs(claim.attempts))) continue
     }
     const createdAt = header.createdAt ?? 0
     if (createdAt > 0 && now - createdAt > ageLimit) {
-      stale.push(header)
+      if (claim === undefined) stale.push(header)
       continue
     }
     candidates.push(header)
   }
+  // New sessions first, then the longest-unrechecked sessions.
   candidates.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-  return { candidates: candidates.slice(0, options.maxPerRun), stale }
+  rechecks.sort((a, b) => (claimOf(a.id)?.at ?? 0) - (claimOf(b.id)?.at ?? 0))
+  return { candidates: [...candidates, ...rechecks].slice(0, options.maxPerRun), stale }
 }

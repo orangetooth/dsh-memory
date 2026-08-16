@@ -29,41 +29,89 @@ export interface CollectedText {
   truncated: boolean
 }
 
-/** Collect a full text response; reports max-tokens truncation instead of throwing. */
-export async function collectTextDetails(runtime: LlmRuntime, options: GenerateOptions, maxChars = 300_000): Promise<CollectedText> {
+/** One tool call produced by the model, with raw JSON arguments. */
+export interface CollectedCall {
+  name: string
+  arguments: string
+}
+
+export interface CollectedResponse extends CollectedText {
+  /** Tool calls produced by the model (tool-call blocks plus deltas). */
+  calls: CollectedCall[]
+}
+
+/**
+ * Collect a full streaming response: text plus tool calls.
+ * Truncation (max-tokens) is reported rather than thrown.
+ */
+export async function collectResponse(runtime: LlmRuntime, options: GenerateOptions, maxChars = 400_000): Promise<CollectedResponse> {
   const textByIndex = new Map<number, string>()
+  const callByName = new Map<string, CollectedCall>()
+  const callIndex = new Map<number, string>()
   let finish: Extract<StreamChunk, { type: 'finish' }>['reason'] | undefined
   let size = 0
+  const accumulate = (amount: number): void => {
+    size += amount
+    if (size > maxChars) throw new LlmCallError('oversize', `model response exceeded ${maxChars} characters`)
+  }
   for await (const chunk of runtime.stream(options)) {
     if (chunk.type === 'text-delta') {
-      const value = (textByIndex.get(chunk.index) ?? '') + chunk.text
-      textByIndex.set(chunk.index, value)
-      size += chunk.text.length
+      textByIndex.set(chunk.index, (textByIndex.get(chunk.index) ?? '') + chunk.text)
+      accumulate(chunk.text.length)
+    } else if (chunk.type === 'tool-call-delta') {
+      const name = chunk.name ?? callIndex.get(chunk.index)
+      if (name !== undefined) callIndex.set(chunk.index, name)
+      const existing = name === undefined ? undefined : callByName.get(name)
+      if (existing !== undefined) {
+        existing.arguments += chunk.argumentsDelta
+      } else if (name !== undefined) {
+        callByName.set(name, { name, arguments: chunk.argumentsDelta })
+      }
+      accumulate(chunk.argumentsDelta.length)
     } else if (chunk.type === 'block-end') {
-      if (chunk.block.type === 'tool-call') throw new LlmCallError('tool-calls', 'model unexpectedly requested a tool')
       if (chunk.block.type === 'text') {
         textByIndex.set(chunk.index, chunk.block.text)
         size = [...textByIndex.values()].reduce((total, text) => total + text.length, 0)
+        if (size > maxChars) throw new LlmCallError('oversize', `model response exceeded ${maxChars} characters`)
+      } else if (chunk.block.type === 'tool-call') {
+        callByName.set(chunk.block.name, { name: chunk.block.name, arguments: chunk.block.arguments })
       }
-    } else if (chunk.type === 'tool-call-delta') {
-      throw new LlmCallError('tool-calls', 'model unexpectedly requested a tool')
     } else if (chunk.type === 'finish') {
       finish = chunk.reason
     }
-    if (size > maxChars) throw new LlmCallError('oversize', `model response exceeded ${maxChars} characters`)
   }
   if (finish === undefined) throw new LlmCallError('empty', 'model response has no finish reason')
   if (finish.kind === 'error' || finish.kind === 'aborted') throw new LlmCallError(finish.kind, finish.failure.message)
-  if (finish.kind === 'tool-calls') throw new LlmCallError('tool-calls', 'model unexpectedly requested a tool')
   const text = [...textByIndex.entries()].sort(([left], [right]) => left - right).map(([, value]) => value).join('')
-  return { text, truncated: finish.kind === 'max-tokens' }
+  return { text, calls: [...callByName.values()], truncated: finish.kind === 'max-tokens' }
+}
+
+/** Collect a full text response; reports max-tokens truncation instead of throwing. */
+export async function collectTextDetails(runtime: LlmRuntime, options: GenerateOptions, maxChars = 400_000): Promise<CollectedText> {
+  const { text, truncated } = await collectResponse(runtime, options, maxChars)
+  return { text, truncated }
 }
 
 /** Collect a full text response, failing on any abnormal finish including truncation. */
-export async function collectText(runtime: LlmRuntime, options: GenerateOptions, maxChars = 300_000): Promise<string> {
+export async function collectText(runtime: LlmRuntime, options: GenerateOptions, maxChars = 400_000): Promise<string> {
   const { text, truncated } = await collectTextDetails(runtime, options, maxChars)
   if (truncated) throw new LlmCallError('max-tokens', 'model response reached its output limit')
   return text
+}
+
+/** Parse the raw JSON arguments of one collected tool call. */
+export function parseCallArguments(call: CollectedCall | undefined): Record<string, unknown> {
+  if (call === undefined || call.arguments.trim() === '') throw new LlmCallError('invalid-json', 'tool call has empty arguments')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(call.arguments)
+  } catch {
+    throw new LlmCallError('invalid-json', `tool call "${call.name}" arguments are not valid JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new LlmCallError('invalid-json', `tool call "${call.name}" arguments are not a JSON object`)
+  }
+  return parsed as Record<string, unknown>
 }
 
 /** Strip a ```json fence when present. */
@@ -148,6 +196,7 @@ export function generateOptions(
   userText: string,
   maxTokens: number,
   signal?: AbortSignal,
+  tools?: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }>,
 ): GenerateOptions {
   return {
     provider: route.provider,
@@ -156,6 +205,7 @@ export function generateOptions(
     temperature: 0,
     maxTokens,
     ...(signal === undefined ? {} : { signal }),
+    ...(tools === undefined ? {} : { tools: tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) }),
     messages: [{
       id: `dsh-memory-${randomUUID()}` as never,
       role: 'user',

@@ -26,7 +26,11 @@ export function fakeKv(): { facility: KvFacilityLike; records: Map<string, unkno
   return { facility, records }
 }
 
-export type FakeResponse = string | Error | { text: string; truncated?: boolean }
+export type FakeResponse = string | Error | {
+  text?: string
+  calls?: Array<{ name: string; arguments: string }>
+  truncated?: boolean
+}
 
 export function fakeLlm(responses: Array<FakeResponse> = []): { llm: LlmRuntime; calls: GenerateOptions[] } {
   const calls: GenerateOptions[] = []
@@ -40,8 +44,16 @@ export function fakeLlm(responses: Array<FakeResponse> = []): { llm: LlmRuntime;
           yield { type: 'finish', reason: { kind: 'stop' } } as const
           return
         }
-        const text = typeof response === 'string' ? response : response.text
         const truncated = typeof response !== 'string' && response.truncated === true
+        if (typeof response !== 'string' && response.calls !== undefined) {
+          for (const [index, call] of response.calls.entries()) {
+            yield { type: 'tool-call-delta', index, id: `call-${index}` as never, name: call.name, argumentsDelta: call.arguments } as const
+            yield { type: 'block-end', index, block: { type: 'tool-call', id: `call-${index}` as never, name: call.name, arguments: call.arguments } } as const
+          }
+          yield { type: 'finish', reason: { kind: truncated ? 'max-tokens' : 'tool-calls' } } as const
+          return
+        }
+        const text = typeof response === 'string' ? response : (response.text ?? '')
         yield { type: 'text-delta', index: 0, text } as const
         yield { type: 'finish', reason: { kind: truncated ? 'max-tokens' : 'stop' } } as const
       })()

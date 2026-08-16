@@ -16,6 +16,10 @@ export interface Config {
     extractionConcurrency: number;
     /** Sessions with fewer rendered events are skipped as no-op. */
     minSessionEvents: number;
+    /** Already-processed sessions are re-checked for growth no more often than this. */
+    recheckIntervalMs: number;
+    /** Minimum new rendered events a grown session needs before a delta extraction. */
+    minDeltaEvents: number;
     /** Sessions older than this many days are marked no-op instead of extracted. */
     maxRolloutAgeDays: number;
     /** Hard cap on the rendered transcript sent to the extraction model. */

@@ -150,16 +150,38 @@ export class MemoryStateStore {
       status: 'running',
       at: this.now(),
       attempts: (previous?.attempts ?? 0) + 1,
+      ...(previous?.slug === undefined ? {} : { slug: previous.slug }),
+      ...(previous?.lastSeq === undefined ? {} : { lastSeq: previous.lastSeq }),
+      ...(previous?.parts === undefined ? {} : { parts: previous.parts }),
     }
     this.queueSave()
   }
 
-  claimDone(id: string, slug?: string): void {
+  claimDone(id: string, slug?: string, lastSeq?: number, parts?: number): void {
+    const previous = this.state.processed[id]
     this.state.processed[id] = {
       status: 'done',
       at: this.now(),
-      attempts: this.state.processed[id]?.attempts ?? 0,
+      attempts: previous?.attempts ?? 0,
       ...(slug === undefined ? {} : { slug }),
+      ...(previous?.slug !== undefined && slug === undefined ? { slug: previous.slug } : {}),
+      ...(lastSeq === undefined ? {} : { lastSeq }),
+      ...(parts === undefined ? {} : { parts }),
+    }
+    this.queueSave()
+  }
+
+  /** Re-check touched a claim but nothing new was worth extracting. */
+  claimUnchanged(id: string, lastSeq: number): void {
+    const previous = this.state.processed[id]
+    if (previous === undefined) return
+    this.state.processed[id] = {
+      status: previous.status === 'failed' ? 'failed' : previous.status === 'noop' ? 'noop' : 'done',
+      at: this.now(),
+      attempts: previous.attempts,
+      ...(previous.slug === undefined ? {} : { slug: previous.slug }),
+      ...(previous.parts === undefined ? {} : { parts: previous.parts }),
+      lastSeq,
     }
     this.queueSave()
   }
@@ -219,6 +241,19 @@ export class MemoryStateStore {
   setOverrides(overrides: Partial<Config>): void {
     this.state.overrides = { ...this.state.overrides, ...overrides }
     this.queueSave()
+  }
+
+  /** Re-queue every failed claim so the next pipeline run retries them. */
+  resetFailedClaims(): number {
+    let count = 0
+    for (const [id, claim] of Object.entries(this.state.processed)) {
+      if (claim.status === 'failed') {
+        delete this.state.processed[id]
+        count += 1
+      }
+    }
+    if (count > 0) this.queueSave()
+    return count
   }
 
   async flush(): Promise<void> {

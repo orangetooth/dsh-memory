@@ -34,14 +34,14 @@ export { MemoryStateStore, type KvFacilityLike, type KvUnitLike } from './bookke
 export { MemoryFiles, ensureSummaryV1 } from './files.js'
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js'
 export {
-  collectText, collectTextDetails, extractJsonObject, generateOptions, LlmCallError,
-  parseFencedBlocks, pickBlock, resolveRoute, stripFences,
+  collectResponse, collectText, collectTextDetails, extractJsonObject, generateOptions,
+  LlmCallError, parseCallArguments, parseFencedBlocks, pickBlock, resolveRoute, stripFences,
 } from './llm.js'
-export type { CollectedText, LlmRuntime, ModelRoute } from './llm.js'
+export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, ModelRoute } from './llm.js'
 export { defaultMemoryRoot, isWithin, resolveMemoryRoot, sanitizeSlug } from './paths.js'
 export { Phase1Runner, type Phase1Deps, type Phase1Summary } from './phase1.js'
 export { Phase2Runner, type Phase2Deps, type Phase2Outcome } from './phase2.js'
-export { PHASE1_SYSTEM, PHASE2_SYSTEM, phase1User, phase2User } from './prompts.js'
+export { PHASE1_SYSTEM, PHASE1_TOOL, PHASE2_SYSTEM, PHASE2_TOOL, phase1User, phase2User } from './prompts.js'
 export type { Phase1InputMeta, Phase2Input } from './prompts.js'
 export { redactSecrets, renderEvent, renderTranscript, selectCandidates } from './rollout.js'
 export type { SelectionOptions, SelectionResult, TranscriptOptions } from './rollout.js'
@@ -126,7 +126,7 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
     const cfg = configNow()
     if (!cfg.enabled) return
     const summary = await phase1.run()
-    if (summary.done > 0 || state.pendingConsolidation) {
+    if (summary.done > 0 || state.pendingConsolidation || await files.hasPendingNotes()) {
       await phase2.run(false)
     }
     await injection.reload()

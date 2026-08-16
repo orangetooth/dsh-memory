@@ -5,8 +5,8 @@ import type { Config } from './config.js'
 import type { MemoryFiles } from './files.js'
 import { ensureSummaryV1 } from './files.js'
 import type { LlmRuntime, ModelRoute } from './llm.js'
-import { collectText, generateOptions, parseFencedBlocks, pickBlock } from './llm.js'
-import { PHASE2_SYSTEM, phase2User } from './prompts.js'
+import { collectResponse, generateOptions, parseCallArguments, parseFencedBlocks, pickBlock } from './llm.js'
+import { PHASE2_SYSTEM, PHASE2_TOOL, phase2User } from './prompts.js'
 import { messageOf } from './util.js'
 
 export type Phase2Outcome =
@@ -48,14 +48,20 @@ export class Phase2Runner {
     const clock = this.deps.now ?? Date.now
     const now = clock()
     if (!force) {
-      if (!state.pendingConsolidation) return { kind: 'skipped', reason: 'no-input' }
+      // Ad hoc notes alone must also be able to wake consolidation, even when
+      // an earlier run cleared the pending flag before the notes were merged.
+      if (!state.pendingConsolidation && !(await files.hasPendingNotes())) {
+        return { kind: 'skipped', reason: 'no-input' }
+      }
       if (now - state.lastPhase2At < cfg.consolidationCooldownMs) return { kind: 'skipped', reason: 'cooldown' }
     }
     const modelRoute = route()
     if (modelRoute === undefined) return { kind: 'skipped', reason: 'no-route' }
     await files.ensureLayout()
     const raw = ((await files.readIfExists('raw_memories.md')) ?? '').trim()
-    if (!force && raw === '') {
+    const noteEntries = await files.pendingNotes()
+    const notes = noteEntries.map(entry => entry.content)
+    if (!force && raw === '' && notes.length === 0) {
       state.setPendingConsolidation(false)
       return { kind: 'skipped', reason: 'no-input' }
     }
@@ -68,23 +74,39 @@ export class Phase2Runner {
       memory,
       summary,
       raw: raw.slice(-cfg.maxRawChars),
+      notes,
       rolloutIndex,
     })
     try {
-      const response = await collectText(
+      const response = await collectResponse(
         llm,
-        generateOptions(modelRoute, PHASE2_SYSTEM, userText, cfg.phase2MaxTokens),
-        400_000,
+        generateOptions(modelRoute, PHASE2_SYSTEM, userText, cfg.phase2MaxTokens, undefined, [PHASE2_TOOL]),
+        800_000,
       )
-      const blocks = parseFencedBlocks(response)
-      const nextMemory = pickBlock(blocks, ['memory.md', 'mem.md'])
-      const nextSummary = pickBlock(blocks, ['memory_summary.md', 'memory-summary.md', 'summary.md'])
+      // Structured tool call first; fenced text blocks remain a fallback for
+      // models that ignore the tool schema.
+      let nextMemory: string | undefined
+      let nextSummary: string | undefined
+      const toolCall = response.calls.find(call => call.name === 'memory_write')
+      if (toolCall !== undefined) {
+        const args = parseCallArguments(toolCall)
+        if (typeof args.memory_md === 'string' && args.memory_md.trim() !== '') nextMemory = args.memory_md
+        if (typeof args.memory_summary_md === 'string' && args.memory_summary_md.trim() !== '') nextSummary = args.memory_summary_md
+      }
       if (nextMemory === undefined || nextSummary === undefined) {
-        throw new Error('整合输出缺少带标签的代码块（需要 ```MEMORY.md 与 ```memory_summary.md 两个块）')
+        const blocks = parseFencedBlocks(response.text)
+        nextMemory = pickBlock(blocks, ['memory.md', 'mem.md'])
+        nextSummary = pickBlock(blocks, ['memory_summary.md', 'memory-summary.md', 'summary.md'])
+      }
+      if (nextMemory === undefined || nextSummary === undefined) {
+        throw new Error('整合输出缺少 memory_write 工具调用或带标签的代码块（```MEMORY.md 与 ```memory_summary.md）')
       }
       await files.writeAtomic('MEMORY.md', nextMemory.trimEnd() + '\n')
       await files.writeAtomic('memory_summary.md', ensureSummaryV1(nextSummary).trimEnd() + '\n')
       await files.rotateRaw()
+      for (const entry of noteEntries) {
+        await files.archiveNote(entry.path).catch(() => {})
+      }
       state.recordPhase2(now)
       state.setPendingConsolidation(false)
       return { kind: 'consolidated', mode }

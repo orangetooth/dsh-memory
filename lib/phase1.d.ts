@@ -9,6 +9,7 @@ export interface Phase1Summary {
     done: number;
     noop: number;
     failed: number;
+    unchanged: number;
     skippedNoRoute: boolean;
     skippedNoSessions: boolean;
 }
@@ -31,6 +32,11 @@ export declare class Phase1Runner {
     run(): Promise<Phase1Summary>;
     private execute;
     private extractOne;
+    /**
+     * One extraction call: structured tool call preferred, text-JSON fallback,
+     * and a single halved-input retry when the output was truncated.
+     */
+    private callExtract;
     private normalizeFields;
 }
 //# sourceMappingURL=phase1.d.ts.map
