@@ -39,6 +39,9 @@
 - 🔁 **可靠调度**：每个会话一个租约（KV 持久化），重启不重复处理、不重复整合；
   失败带退避重试；孤儿租约自动回收。
 - ⚙️ **设置页**：设置 → 长期记忆 中查看统计、手动触发提取/整合、调整冷却与模型路由。
+- 🧭 **原版阶段推理等级**：忠实采用 Codex 的 Phase 1 `low`、Phase 2 `medium`；若模型
+  不提供该档位，按能力目录映射到最接近的可用档（距离相同时优先更高档），设置页显示
+  实际映射结果。例如 DeepSeek 的 `off/high/max` 会映射为 `low→high`、`medium→high`。
 
 ## 工作原理
 
@@ -131,7 +134,7 @@ https://github.com/yan5236/dsh-memory
 | `minSessionEvents` | `4` | 事件过少的会话直接跳过 |
 | `maxRolloutAgeDays` | `30` | 超龄会话标记跳过 |
 | `maxTranscriptChars` | `60000` | 送入提取模型的会话文本上限 |
-| `phase1MaxTokens` | `4096` | 单次提取输出上限 |
+| `phase1MaxTokens` | `16384` | 单次提取输出上限（同时容纳会话回顾与原始记忆） |
 | `consolidationCooldownMs` | `21600000` | 整合冷却（失败后约 15 分钟自动重试，不受冷却限制） |
 | `maxRawChars` | `120000` | 整合 agent 单轮扫描 raw memories 的提示预算 |
 | `phase2MaxTokens` | `12000` | 整合 agent 每次模型请求的输出上限 |

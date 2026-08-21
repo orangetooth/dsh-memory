@@ -61,6 +61,10 @@ export interface StatePayload {
     storage: 'ok' | 'unavailable';
     storageError: string;
     route: ModelRoute | null;
+    stageRoutes: {
+        phase1: ModelRoute | null;
+        phase2: ModelRoute | null;
+    };
     providers: ProviderEntry[];
     models: ModelEntry[];
     counts: {

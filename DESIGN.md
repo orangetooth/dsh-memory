@@ -53,6 +53,7 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
 | rollout JSONL files | session logs via `sessionQuery.readSession` / `sessionPersistence.load` |
 | startup task, stage-1 job leases, retry backoff | boot catch-up + `agent/turn-stopping` debounce; per-session claims with backoff and restart recovery |
 | global Phase 2 lock + dedicated agent + 6h cooldown | in-process single-flight + configurable cooldown + fresh `spawn` child |
+| Phase 1 `low` reasoning / Phase 2 `medium` reasoning | exact stage targets mapped through `resolveModelInfo`; nearest supported effort, higher on ties |
 | `~/.codex/memories` + git baseline | `$DSH_HOME/memories`; atomic writes (temp + rename); no git dependency |
 | developer-policy injection + `list`/`read`/`search`/`add_ad_hoc_note` | `systemPrompt.section` with a per-assembly provider + `memory_list`/`memory_read`/`memory_search`/`memory_add` |
 | secret redaction, no-op gate, `v1` first-line protocol | kept: redaction on both input and output, empty-field no-op, exact `v1` first line |
@@ -75,7 +76,8 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
 One KV record holds `{ processed: sessionId → claim, lastPhase1At, lastPhase2At, phase2Error,
 pendingConsolidation, overrides }`. Claims are `running | done | noop | failed(attempts)`, so a
 restart never re-extracts a session, never re-runs consolidation inside the cooldown, and
-interrupted `running` claims recover as failed after 30 minutes. Failed claims retry with
+persisted `running` claims recover immediately on restart; a live-process claim is also released
+if its 30-minute lease expires. Failed claims retry with
 exponential backoff and give up at `retryLimit`. Writes are serialized through a promise chain;
 when the KV backend is unavailable the store degrades to process-local state.
 
@@ -112,6 +114,13 @@ for adapters that ignore tool schemas. Phase 2 instead uses the subagent seam's 
 empty, abnormal, or non-completed results. Phase 1 also retries once with a halved transcript
 when output is truncated.
 
+The stage reasoning policy is copied from Codex rather than inherited from the user's active
+conversation: Phase 1 targets `low`, and the Phase 2 child targets `medium`. DSH effort ids are
+adapter-owned, so exact matches win and otherwise the nearest advertised known level is used,
+preferring the higher level on a tie. The direct Phase 1 call carries that effort in
+`GenerateOptions`; a scoped `agent/request` waterfall injects Phase 2's effort only into the
+`memory-consolidation` child.
+
 ### Ad hoc notes
 
 `memory_add` writes user-requested notes into `extensions/ad_hoc/notes/`; Phase 2 feeds every
@@ -135,7 +144,8 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
 - The consolidation prompt demands the exact `v1` first line and the plugin enforces it
   mechanically (`ensureSummaryV1`).
 - Each consolidation-agent request is bounded by `phase2MaxTokens`; injected summaries by
-  `maxSummaryChars`; Phase 1 transcripts by `maxTranscriptChars`. `maxRawChars` is the explicit
+  `maxSummaryChars`; Phase 1 transcripts by `maxTranscriptChars` and extraction output by
+  `phase1MaxTokens` (default 16384). `maxRawChars` is the explicit
   scan budget stated to the progressive Phase 2 agent rather than an eager prompt slice.
 
 ## Failure modes and recovery

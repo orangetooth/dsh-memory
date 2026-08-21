@@ -40,6 +40,9 @@ describe('real Cordis Loader composition', () => {
 
     context = new Context()
     context.provide('llm', {
+      async resolveModelInfo(provider: string, model: string) {
+        return { provider, id: model, name: model }
+      },
       stream(_options: GenerateOptions): AsyncIterable<StreamChunk> {
         return (async function* () {
           yield { type: 'finish', reason: { kind: 'stop' } } as const

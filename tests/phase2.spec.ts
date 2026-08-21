@@ -12,7 +12,7 @@ import type {
 import { resolveConfig } from '../src/config.js'
 import { MemoryFiles } from '../src/files.js'
 import { Phase2Runner } from '../src/phase2.js'
-import { fakeKv } from './helpers.js'
+import { fakeKv, fakeLlm } from './helpers.js'
 
 let root: string | undefined
 
@@ -67,10 +67,12 @@ async function harness(
   const files = new MemoryFiles(root)
   await files.ensureLayout()
   const fake = fakeConsolidator(responses, readiness)
+  const { llm } = fakeLlm()
   const cfg = resolveConfig({ provider: 'mock', model: 'mock', consolidationCooldownMs: cooldownMs })
   const clock = { value: Date.now() }
   const runner = new Phase2Runner({
     consolidator: fake.consolidator,
+    llm,
     state,
     files,
     config: () => cfg,

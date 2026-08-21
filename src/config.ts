@@ -53,7 +53,7 @@ export const DEFAULTS: Config = {
   minDeltaEvents: 6,
   maxRolloutAgeDays: 30,
   maxTranscriptChars: 60_000,
-  phase1MaxTokens: 4_096,
+  phase1MaxTokens: 16_384,
   consolidationCooldownMs: 6 * 60 * 60_000,
   maxRawChars: 120_000,
   phase2MaxTokens: 12_000,

@@ -3,11 +3,12 @@ import type { SubagentRun, SubagentStartRequest } from '@deepseek-ai/dsh-subagen
 import {
   HarnessConsolidationAgent,
   READ_ONLY_MEMORY_TOOLS,
+  type AgentRequestRuntimeLike,
   type SubagentRuntimeLike,
 } from '../src/consolidation-agent.js'
 import { PHASE2_OUTPUT_SCHEMA, PHASE2_SYSTEM } from '../src/prompts.js'
 
-const parent = {} as SubagentStartRequest['parent']
+const parent = { id: 'root-agent' } as unknown as SubagentStartRequest['parent']
 const request = {
   mode: 'incremental' as const,
   memoryRoot: '/memory-root',
@@ -102,6 +103,50 @@ describe('HarnessConsolidationAgent', () => {
     expect(JSON.stringify(start.request.prompt)).toContain('memory_read')
     expect(JSON.stringify(start.request.prompt)).not.toContain('MEMORY.md 新内容')
     expect(fake.disposed.count).toBe(1)
+  })
+
+  it('injects the resolved Phase 2 effort only into its consolidation child', async () => {
+    const fake = fakeRuntime({
+      stopReason: 'completed',
+      structured: { memory_md: '# Memory\n', memory_summary_md: 'v1\n- topic\n' },
+    })
+    let handler: Parameters<AgentRequestRuntimeLike['on']>[1] | undefined
+    let listenerDisposals = 0
+    const agentRequests: AgentRequestRuntimeLike = {
+      on(_event, nextHandler) {
+        handler = nextHandler
+        return () => {
+          listenerDisposals += 1
+        }
+      },
+    }
+    const originalStart = fake.runtime.start.bind(fake.runtime)
+    let configuredEffort: unknown
+    fake.runtime.start = async (provider, startRequest) => {
+      const resolved = await handler!(
+        {
+          agent: {
+            id: 'memory-child',
+            session: {
+              header: { parentSession: parent.id },
+              events: [{ type: 'subagent/descriptor', data: { label: 'memory-consolidation' } }],
+            },
+          },
+        },
+        async () => ({ provider: 'mock-provider', model: 'mock-model', reasoningEffort: 'max' }),
+      )
+      configuredEffort = resolved.reasoningEffort
+      return originalStart(provider, startRequest)
+    }
+    const agent = new HarnessConsolidationAgent({ subagents: fake.runtime, parent: () => parent, agentRequests })
+
+    await agent.consolidate({
+      ...request,
+      route: { ...request.route, reasoningEffort: 'high' as never },
+    })
+
+    expect(configuredEffort).toBe('high')
+    expect(listenerDisposals).toBe(1)
   })
 
   it('rejects abnormal completion and always disposes the child', async () => {

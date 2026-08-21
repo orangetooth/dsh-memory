@@ -36,8 +36,9 @@ export declare class MemoryStateStore {
     storageError: string;
     constructor(getKv: () => KvFacilityLike | undefined, now?: () => number);
     init(): Promise<void>;
-    /** Recover claims interrupted by a restart, mirroring Codex lease expiry. */
-    private recoverOrphans;
+    private recoverRunningBefore;
+    /** Release a live-process claim whose lease elapsed without completion. */
+    recoverExpiredRunningClaims(): number;
     private openUnit;
     private queueSave;
     snapshot(): MemoryState;

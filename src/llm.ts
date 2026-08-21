@@ -1,16 +1,76 @@
 /** LLM call helpers: streaming text collection, JSON/fence parsing, route resolution. */
 
 import { randomUUID } from 'node:crypto'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type {
+  GenerateOptions,
+  LlmResolvedModelInfo,
+  ReasoningEffortId,
+  StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import type { Config } from './config.js'
 
 export interface LlmRuntime {
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+  resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>
 }
 
 export interface ModelRoute {
   provider: string
   model: string
+  /** Adapter-owned effort selected for this memory stage. */
+  reasoningEffort?: ReasoningEffortId
+}
+
+export type MemoryStageReasoning = 'low' | 'medium'
+
+/** Codex uses low for per-session extraction and medium for consolidation. */
+export const PHASE1_REASONING: MemoryStageReasoning = 'low'
+export const PHASE2_REASONING: MemoryStageReasoning = 'medium'
+
+const REASONING_RANK: Readonly<Record<string, number>> = {
+  off: 0,
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+  ultra: 7,
+}
+
+/**
+ * Translate Codex's stage effort onto the exact route's adapter-owned levels.
+ * Exact matches win; otherwise the nearest known level wins, with a higher
+ * level breaking ties so extraction quality is not silently traded for `off`.
+ */
+export async function resolveStageRoute(
+  runtime: LlmRuntime,
+  route: ModelRoute,
+  target: MemoryStageReasoning,
+  signal?: AbortSignal,
+): Promise<ModelRoute> {
+  const info = await runtime.resolveModelInfo(route.provider, route.model, signal)
+  const reasoning = info.reasoning
+  if (reasoning === undefined || reasoning.efforts.length === 0) return route
+  const exact = reasoning.efforts.find(effort => String(effort.id) === target)
+  if (exact !== undefined) return { ...route, reasoningEffort: exact.id }
+
+  const targetRank = REASONING_RANK[target]!
+  const ranked = reasoning.efforts
+    .flatMap((effort) => {
+      const rank = REASONING_RANK[String(effort.id)]
+      return rank === undefined ? [] : [{ effort, rank }]
+    })
+    .sort((left, right) => {
+      const distance = Math.abs(left.rank - targetRank) - Math.abs(right.rank - targetRank)
+      return distance !== 0 ? distance : right.rank - left.rank
+    })
+  const selected = ranked[0]?.effort
+    ?? reasoning.efforts.find(effort => effort.id === reasoning.defaultEffort)
+    ?? reasoning.efforts.find(effort => String(effort.id) !== 'off')
+    ?? reasoning.efforts[0]
+  return selected === undefined ? route : { ...route, reasoningEffort: selected.id }
 }
 
 export class LlmCallError extends Error {
@@ -204,6 +264,7 @@ export function generateOptions(
     system,
     temperature: 0,
     maxTokens,
+    ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
     ...(signal === undefined ? {} : { signal }),
     ...(tools === undefined ? {} : { tools: tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) }),
     messages: [{

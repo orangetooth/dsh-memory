@@ -1,13 +1,26 @@
 /** LLM call helpers: streaming text collection, JSON/fence parsing, route resolution. */
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, LlmResolvedModelInfo, ReasoningEffortId, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { Config } from './config.js';
 export interface LlmRuntime {
     stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+    resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
 }
 export interface ModelRoute {
     provider: string;
     model: string;
+    /** Adapter-owned effort selected for this memory stage. */
+    reasoningEffort?: ReasoningEffortId;
 }
+export type MemoryStageReasoning = 'low' | 'medium';
+/** Codex uses low for per-session extraction and medium for consolidation. */
+export declare const PHASE1_REASONING: MemoryStageReasoning;
+export declare const PHASE2_REASONING: MemoryStageReasoning;
+/**
+ * Translate Codex's stage effort onto the exact route's adapter-owned levels.
+ * Exact matches win; otherwise the nearest known level wins, with a higher
+ * level breaking ties so extraction quality is not silently traded for `off`.
+ */
+export declare function resolveStageRoute(runtime: LlmRuntime, route: ModelRoute, target: MemoryStageReasoning, signal?: AbortSignal): Promise<ModelRoute>;
 export declare class LlmCallError extends Error {
     readonly kind: 'error' | 'aborted' | 'max-tokens' | 'empty' | 'oversize' | 'tool-calls' | 'invalid-json';
     constructor(kind: 'error' | 'aborted' | 'max-tokens' | 'empty' | 'oversize' | 'tool-calls' | 'invalid-json', message: string);

@@ -30,6 +30,10 @@ interface StatePayload {
   storage: 'ok' | 'unavailable'
   storageError: string
   route: { provider: string; model: string } | null
+  stageRoutes: {
+    phase1: { provider: string; model: string; reasoningEffort?: string } | null
+    phase2: { provider: string; model: string; reasoningEffort?: string } | null
+  }
   providers: ProviderEntry[]
   models: ModelEntry[]
   counts: { done: number; noop: number; failed: number; running: number; total: number }
@@ -119,6 +123,7 @@ function MemorySettings(): React.ReactNode {
       maxSummaryChars: Number(cfg.maxSummaryChars ?? 8000),
       provider: String(cfg.provider ?? ''),
       model: String(cfg.model ?? ''),
+      phase1MaxTokens: Number(cfg.phase1MaxTokens ?? 16384),
       phase2MaxTokens: Number(cfg.phase2MaxTokens ?? 12000),
       manualModel: prev?.manualModel === true,
     }))
@@ -225,6 +230,7 @@ function MemorySettings(): React.ReactNode {
       maxSummaryChars: Number(form.maxSummaryChars ?? 8000),
       provider: String(form.provider ?? ''),
       model: String(form.model ?? ''),
+      phase1MaxTokens: Number(form.phase1MaxTokens ?? 16384),
       phase2MaxTokens: Number(form.phase2MaxTokens ?? 12000),
     }, '配置已保存，并持久化到 DSH 存储。')
   }
@@ -242,6 +248,11 @@ function MemorySettings(): React.ReactNode {
 
   const pipeline = payload.pipeline
   const routeLabel = payload.route === null ? '部署默认模型' : `${payload.route.provider} / ${payload.route.model}`
+  const effortLabel = (route: StatePayload['stageRoutes']['phase1'], target: string): string => {
+    if (route === null) return `${target}→不可用`
+    return `${target}→${route.reasoningEffort ?? '模型默认'}`
+  }
+  const stageReasoning = `阶段推理：Phase 1 ${effortLabel(payload.stageRoutes.phase1, 'low')} · Phase 2 ${effortLabel(payload.stageRoutes.phase2, 'medium')}`
   const provider = String(form.provider ?? '')
   const knownProviders = Array.isArray(payload.providers) ? payload.providers : []
   const knownModels = Array.isArray(payload.models) ? payload.models : []
@@ -306,6 +317,7 @@ function MemorySettings(): React.ReactNode {
           : null,
         el('button', { className: 'dm-btn secondary', disabled: busy, onClick: () => { void call('get-state').then(() => setNotice({ kind: 'ok', text: '已刷新。' })).catch(() => {}) } }, '刷新'),
         el('span', { className: 'dm-dimmed' }, `当前路由：${routeLabel}`)),
+      el('p', { className: 'dm-dimmed' }, stageReasoning),
     ),
     failureLines.length > 0
       ? el('div', { className: 'dm-card' },
@@ -324,6 +336,7 @@ function MemorySettings(): React.ReactNode {
         num('整合冷却（小时）', 'cooldownHours', '两次自动整合的最小间隔，默认 6 小时'),
         num('每轮处理会话数', 'maxRolloutsPerRun', '每次管道运行提取的会话数上限'),
         num('注入摘要上限（字符）', 'maxSummaryChars', 'memory_summary.md 注入 system prompt 的截断上限'),
+        num('提取输出 token 上限', 'phase1MaxTokens', '默认 16384，容纳会话回顾与原始记忆'),
         num('整合输出 token 上限', 'phase2MaxTokens')),
       el('div', { className: 'dm-grid' },
         el('div', { className: 'dm-field' },

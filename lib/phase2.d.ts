@@ -3,7 +3,7 @@ import type { MemoryStateStore } from './bookkeeping.js';
 import type { Phase2Consolidator } from './consolidation-agent.js';
 import type { Config } from './config.js';
 import type { MemoryFiles } from './files.js';
-import type { ModelRoute } from './llm.js';
+import type { LlmRuntime, ModelRoute } from './llm.js';
 export type Phase2Outcome = {
     kind: 'consolidated';
     mode: 'init' | 'incremental';
@@ -16,6 +16,7 @@ export type Phase2Outcome = {
 };
 export interface Phase2Deps {
     consolidator: Phase2Consolidator;
+    llm: LlmRuntime;
     state: MemoryStateStore;
     files: MemoryFiles;
     config: () => Config;

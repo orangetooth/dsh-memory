@@ -4,7 +4,14 @@ import type { MemoryStateStore } from './bookkeeping.js'
 import type { Config } from './config.js'
 import type { MemoryFiles } from './files.js'
 import type { LlmRuntime, ModelRoute } from './llm.js'
-import { collectResponse, extractJsonObject, generateOptions, parseCallArguments } from './llm.js'
+import {
+  collectResponse,
+  extractJsonObject,
+  generateOptions,
+  parseCallArguments,
+  PHASE1_REASONING,
+  resolveStageRoute,
+} from './llm.js'
 import { sanitizeSlug } from './paths.js'
 import { PHASE1_SYSTEM, PHASE1_TOOL, phase1User } from './prompts.js'
 import { redactSecrets, renderTranscript, selectCandidates } from './rollout.js'
@@ -85,12 +92,14 @@ export class Phase1Runner {
     if (reader === undefined) {
       return { selected: 0, done: 0, noop: 0, failed: 0, unchanged: 0, skippedNoRoute: false, skippedNoSessions: true }
     }
-    const route = this.deps.route()
-    if (route === undefined) {
+    const baseRoute = this.deps.route()
+    if (baseRoute === undefined) {
       return { selected: 0, done: 0, noop: 0, failed: 0, unchanged: 0, skippedNoRoute: true, skippedNoSessions: false }
     }
     const clock = this.deps.now ?? Date.now
     const cfg = config()
+    state.recoverExpiredRunningClaims()
+    const route = await resolveStageRoute(this.deps.llm, baseRoute, PHASE1_REASONING)
     const headers = await reader.listSessions()
     const selection = selectCandidates(headers, id => state.processedOf(id), {
       now: clock,
@@ -194,7 +203,8 @@ export class Phase1Runner {
       state.claimDone(header.id, slug, maxSeq, 1)
       return 'done'
     } catch (error: unknown) {
-      state.claimFailed(header.id, `${messageOf(error)} (route=${route.provider}/${route.model})`)
+      const effort = route.reasoningEffort === undefined ? '' : `, reasoning=${route.reasoningEffort}`
+      state.claimFailed(header.id, `${messageOf(error)} (route=${route.provider}/${route.model}${effort})`)
       return 'failed'
     }
   }

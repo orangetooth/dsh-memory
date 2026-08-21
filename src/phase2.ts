@@ -5,7 +5,8 @@ import type { Phase2Consolidator } from './consolidation-agent.js'
 import type { Config } from './config.js'
 import type { MemoryFiles } from './files.js'
 import { ensureSummaryV1 } from './files.js'
-import type { ModelRoute } from './llm.js'
+import type { LlmRuntime, ModelRoute } from './llm.js'
+import { PHASE2_REASONING, resolveStageRoute } from './llm.js'
 import { messageOf } from './util.js'
 
 export type Phase2Outcome =
@@ -15,6 +16,7 @@ export type Phase2Outcome =
 
 export interface Phase2Deps {
   consolidator: Phase2Consolidator
+  llm: LlmRuntime
   state: MemoryStateStore
   files: MemoryFiles
   config: () => Config
@@ -54,8 +56,9 @@ export class Phase2Runner {
       }
       if (now - state.lastPhase2At < cfg.consolidationCooldownMs) return { kind: 'skipped', reason: 'cooldown' }
     }
-    const modelRoute = route()
-    if (modelRoute === undefined) return { kind: 'skipped', reason: 'no-route' }
+    const baseRoute = route()
+    if (baseRoute === undefined) return { kind: 'skipped', reason: 'no-route' }
+    const modelRoute = await resolveStageRoute(this.deps.llm, baseRoute, PHASE2_REASONING)
     await files.ensureLayout()
     const raw = ((await files.readIfExists('raw_memories.md')) ?? '').trim()
     const noteEntries = await files.pendingNotes()
@@ -94,7 +97,8 @@ export class Phase2Runner {
       // Keep the pending flag and schedule an automatic retry in ~15 minutes
       // instead of freezing behind the full cooldown; manual runs stay available.
       const retryAt = Math.max(0, now - cfg.consolidationCooldownMs + FAILURE_RETRY_MS)
-      const detail = `${messageOf(error)} (route=${modelRoute.provider}/${modelRoute.model})`
+      const effort = modelRoute.reasoningEffort === undefined ? '' : `, reasoning=${modelRoute.reasoningEffort}`
+      const detail = `${messageOf(error)} (route=${modelRoute.provider}/${modelRoute.model}${effort})`
       state.recordPhase2(retryAt, detail)
       return { kind: 'error', error: detail }
     }

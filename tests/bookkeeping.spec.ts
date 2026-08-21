@@ -55,7 +55,7 @@ describe('MemoryStateStore', () => {
     await store.dispose()
   })
 
-  it('keeps fresh running claims untouched', async () => {
+  it('releases even a fresh persisted running claim after restart', async () => {
     const { facility, records } = fakeKv()
     records.set('main', {
       v: 1,
@@ -67,7 +67,20 @@ describe('MemoryStateStore', () => {
     })
     const store = new MemoryStateStore(() => facility)
     await store.init()
-    expect(store.processedOf('active')?.status).toBe('running')
+    expect(store.processedOf('active')).toMatchObject({ status: 'failed', error: 'interrupted by restart' })
+    await store.dispose()
+  })
+
+  it('releases a live-process claim after its lease expires', async () => {
+    const { facility } = fakeKv()
+    const clock = { value: Date.now() }
+    const store = new MemoryStateStore(() => facility, () => clock.value)
+    await store.init()
+    store.claimRunning('active')
+    expect(store.recoverExpiredRunningClaims()).toBe(0)
+    clock.value += 31 * 60_000
+    expect(store.recoverExpiredRunningClaims()).toBe(1)
+    expect(store.processedOf('active')).toMatchObject({ status: 'failed', error: 'running lease expired' })
     await store.dispose()
   })
 

@@ -29,13 +29,36 @@ export interface SubagentRuntimeLike {
     getProvider(name: string): ProviderLike | undefined;
     start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;
 }
+interface AgentRequestConfigLike {
+    provider: string;
+    model: string;
+    reasoningEffort?: unknown;
+    [key: string]: unknown;
+}
+interface RequestAgentLike {
+    id: unknown;
+    session: {
+        header: {
+            parentSession?: unknown;
+        };
+        events: readonly unknown[];
+    };
+}
+/** Structural view of Cordis's agent/request waterfall used for Phase 2 effort. */
+export interface AgentRequestRuntimeLike {
+    on(event: 'agent/request', handler: (payload: {
+        agent: RequestAgentLike;
+    }, next: () => Promise<AgentRequestConfigLike>) => Promise<AgentRequestConfigLike>): () => void;
+}
 export interface HarnessConsolidationAgentDeps {
     subagents: SubagentRuntimeLike;
     parent: () => SubagentStartRequest['parent'] | undefined;
+    agentRequests?: AgentRequestRuntimeLike;
     providerName?: string;
     timeoutMs?: number;
 }
 declare const READ_ONLY_MEMORY_TOOLS: readonly ["memory_list", "memory_read", "memory_search"];
+declare const CONSOLIDATION_LABEL = "memory-consolidation";
 /**
  * Runs Codex-style consolidation as a fresh, one-shot DSH child agent.
  *
@@ -49,5 +72,5 @@ export declare class HarnessConsolidationAgent implements Phase2Consolidator {
     readiness(): ConsolidatorReadiness;
     consolidate(request: ConsolidationRequest): Promise<ConsolidationArtifacts>;
 }
-export { READ_ONLY_MEMORY_TOOLS };
+export { CONSOLIDATION_LABEL, READ_ONLY_MEMORY_TOOLS };
 //# sourceMappingURL=consolidation-agent.d.ts.map

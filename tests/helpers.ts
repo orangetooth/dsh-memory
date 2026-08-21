@@ -35,6 +35,9 @@ export type FakeResponse = string | Error | {
 export function fakeLlm(responses: Array<FakeResponse> = []): { llm: LlmRuntime; calls: GenerateOptions[] } {
   const calls: GenerateOptions[] = []
   const llm: LlmRuntime = {
+    async resolveModelInfo(provider, model) {
+      return { provider, id: model, name: model }
+    },
     stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
       calls.push(options)
       const response = responses.shift()

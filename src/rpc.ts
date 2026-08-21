@@ -5,6 +5,7 @@ import type { Config } from './config.js'
 import { clampOverrides } from './config.js'
 import type { MemoryFiles } from './files.js'
 import type { LlmRuntime, ModelRoute } from './llm.js'
+import { PHASE1_REASONING, PHASE2_REASONING, resolveStageRoute } from './llm.js'
 import type { Phase1Runner } from './phase1.js'
 import type { Phase2Runner, Phase2Outcome } from './phase2.js'
 import { messageOf } from './util.js'
@@ -67,6 +68,7 @@ export interface StatePayload {
   storage: 'ok' | 'unavailable'
   storageError: string
   route: ModelRoute | null
+  stageRoutes: { phase1: ModelRoute | null; phase2: ModelRoute | null }
   providers: ProviderEntry[]
   models: ModelEntry[]
   counts: { done: number; noop: number; failed: number; running: number; total: number }
@@ -108,6 +110,19 @@ async function listModels(deps: RpcDeps, provider: string): Promise<ModelEntry[]
   }
 }
 
+async function stageRoutes(deps: RpcDeps, route: ModelRoute | undefined): Promise<StatePayload['stageRoutes']> {
+  if (route === undefined) return { phase1: null, phase2: null }
+  try {
+    const [phase1, phase2] = await Promise.all([
+      resolveStageRoute(deps.llm, route, PHASE1_REASONING),
+      resolveStageRoute(deps.llm, route, PHASE2_REASONING),
+    ])
+    return { phase1, phase2 }
+  } catch {
+    return { phase1: null, phase2: null }
+  }
+}
+
 async function statePayload(deps: RpcDeps): Promise<StatePayload> {
   const cfg = deps.config()
   const snapshot = deps.state.snapshot()
@@ -123,13 +138,15 @@ async function statePayload(deps: RpcDeps): Promise<StatePayload> {
   }
   failures.sort((a, b) => b.at - a.at)
   const now = Date.now()
+  const route = deps.route()
   return {
     enabled: cfg.enabled,
     root: deps.files.root,
     config: cfg,
     storage: deps.state.storageAvailable ? 'ok' : 'unavailable',
     storageError: deps.state.storageError,
-    route: deps.route() ?? null,
+    route: route ?? null,
+    stageRoutes: await stageRoutes(deps, route),
     providers: await listProviders(deps),
     models: await listModels(deps, cfg.provider),
     counts,

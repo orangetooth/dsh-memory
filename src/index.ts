@@ -12,7 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SubagentRuntime, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { MemoryStateStore, type KvFacilityLike } from './bookkeeping.js'
-import { HarnessConsolidationAgent } from './consolidation-agent.js'
+import { HarnessConsolidationAgent, type AgentRequestRuntimeLike } from './consolidation-agent.js'
 import { Config, resolveConfig } from './config.js'
 import type { Config as ConfigShape } from './config.js'
 import { MemoryFiles } from './files.js'
@@ -34,17 +34,18 @@ export { Config, DEFAULTS, clampOverrides, OVERRIDABLE_KEYS, resolveConfig } fro
 export type { Config as MemoryConfig, OverridableKey } from './config.js'
 export { MemoryStateStore, type KvFacilityLike, type KvUnitLike } from './bookkeeping.js'
 export {
-  HarnessConsolidationAgent, READ_ONLY_MEMORY_TOOLS,
+  CONSOLIDATION_LABEL, HarnessConsolidationAgent, READ_ONLY_MEMORY_TOOLS,
   type ConsolidationArtifacts, type ConsolidationRequest, type ConsolidatorReadiness,
-  type HarnessConsolidationAgentDeps, type Phase2Consolidator, type SubagentRuntimeLike,
+  type AgentRequestRuntimeLike, type HarnessConsolidationAgentDeps, type Phase2Consolidator, type SubagentRuntimeLike,
 } from './consolidation-agent.js'
 export { MemoryFiles, ensureSummaryV1 } from './files.js'
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js'
 export {
   collectResponse, collectText, collectTextDetails, extractJsonObject, generateOptions,
-  LlmCallError, parseCallArguments, parseFencedBlocks, pickBlock, resolveRoute, stripFences,
+  LlmCallError, parseCallArguments, parseFencedBlocks, PHASE1_REASONING, PHASE2_REASONING,
+  pickBlock, resolveRoute, resolveStageRoute, stripFences,
 } from './llm.js'
-export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, ModelRoute } from './llm.js'
+export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, MemoryStageReasoning, ModelRoute } from './llm.js'
 export { defaultMemoryRoot, isWithin, resolveMemoryRoot, sanitizeSlug } from './paths.js'
 export { Phase1Runner, type Phase1Deps, type Phase1Summary } from './phase1.js'
 export { Phase2Runner, type Phase2Deps, type Phase2Outcome } from './phase2.js'
@@ -124,9 +125,13 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   }
 
   let rootAgent: SubagentStartRequest['parent'] | undefined
-  const consolidator = new HarnessConsolidationAgent({ subagents, parent: () => rootAgent })
+  const consolidator = new HarnessConsolidationAgent({
+    subagents,
+    parent: () => rootAgent,
+    agentRequests: ctx as unknown as AgentRequestRuntimeLike,
+  })
   const phase1 = new Phase1Runner({ llm, state, files, sessions: sessionReader, config: configNow, route: routeNow })
-  const phase2 = new Phase2Runner({ consolidator, state, files, config: configNow, route: routeNow })
+  const phase2 = new Phase2Runner({ consolidator, llm, state, files, config: configNow, route: routeNow })
   const injection = new MemoryInjection(files, configNow)
 
   const log = (text: string): void => {
