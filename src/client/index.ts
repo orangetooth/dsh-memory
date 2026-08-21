@@ -30,7 +30,7 @@ interface StatePayload {
   storage: 'ok' | 'unavailable'
   storageError: string
   route: { provider: string; model: string } | null
-  stageRoutes: {
+  stageRoutes?: {
     phase1: { provider: string; model: string; reasoningEffort?: string } | null
     phase2: { provider: string; model: string; reasoningEffort?: string } | null
   }
@@ -248,11 +248,12 @@ function MemorySettings(): React.ReactNode {
 
   const pipeline = payload.pipeline
   const routeLabel = payload.route === null ? '部署默认模型' : `${payload.route.provider} / ${payload.route.model}`
-  const effortLabel = (route: StatePayload['stageRoutes']['phase1'], target: string): string => {
+  const effortLabel = (route: NonNullable<StatePayload['stageRoutes']>['phase1'], target: string): string => {
     if (route === null) return `${target}→不可用`
     return `${target}→${route.reasoningEffort ?? '模型默认'}`
   }
-  const stageReasoning = `阶段推理：Phase 1 ${effortLabel(payload.stageRoutes.phase1, 'low')} · Phase 2 ${effortLabel(payload.stageRoutes.phase2, 'medium')}`
+  const stageRoutes = payload.stageRoutes ?? { phase1: null, phase2: null }
+  const stageReasoning = `阶段推理：Phase 1 ${effortLabel(stageRoutes.phase1, 'low')} · Phase 2 ${effortLabel(stageRoutes.phase2, 'medium')}`
   const provider = String(form.provider ?? '')
   const knownProviders = Array.isArray(payload.providers) ? payload.providers : []
   const knownModels = Array.isArray(payload.models) ? payload.models : []
