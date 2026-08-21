@@ -1,21 +1,20 @@
 /** Phase 2: global consolidation into MEMORY.md and memory_summary.md. */
 
 import type { MemoryStateStore } from './bookkeeping.js'
+import type { Phase2Consolidator } from './consolidation-agent.js'
 import type { Config } from './config.js'
 import type { MemoryFiles } from './files.js'
 import { ensureSummaryV1 } from './files.js'
-import type { LlmRuntime, ModelRoute } from './llm.js'
-import { collectResponse, generateOptions, parseCallArguments, parseFencedBlocks, pickBlock } from './llm.js'
-import { PHASE2_SYSTEM, PHASE2_TOOL, phase2User } from './prompts.js'
+import type { ModelRoute } from './llm.js'
 import { messageOf } from './util.js'
 
 export type Phase2Outcome =
   | { kind: 'consolidated'; mode: 'init' | 'incremental' }
-  | { kind: 'skipped'; reason: 'cooldown' | 'no-input' | 'no-route' }
+  | { kind: 'skipped'; reason: 'cooldown' | 'no-input' | 'no-route' | 'no-agent' | 'no-provider' }
   | { kind: 'error'; error: string }
 
 export interface Phase2Deps {
-  llm: LlmRuntime
+  consolidator: Phase2Consolidator
   state: MemoryStateStore
   files: MemoryFiles
   config: () => Config
@@ -43,7 +42,7 @@ export class Phase2Runner {
   }
 
   private async execute(force: boolean): Promise<Phase2Outcome> {
-    const { state, files, config, llm, route } = this.deps
+    const { state, files, config, consolidator, route } = this.deps
     const cfg = config()
     const clock = this.deps.now ?? Date.now
     const now = clock()
@@ -68,41 +67,22 @@ export class Phase2Runner {
     const memory = (await files.readIfExists('MEMORY.md')) ?? ''
     const summary = (await files.readIfExists('memory_summary.md')) ?? ''
     const mode: 'init' | 'incremental' = memory.trim() === '' && summary.trim() === '' ? 'init' : 'incremental'
-    const rolloutIndex = await files.rolloutIndex(120)
-    const userText = phase2User({
-      mode,
-      memory,
-      summary,
-      raw: raw.slice(-cfg.maxRawChars),
-      notes,
-      rolloutIndex,
-    })
+    const readiness = consolidator.readiness()
+    if (readiness !== 'ready') return { kind: 'skipped', reason: readiness }
+    const rolloutSummaries = (await files.listTree('rollout_summaries'))
+      .filter(entry => entry.kind === 'file' && entry.path.endsWith('.md')).length
     try {
-      const response = await collectResponse(
-        llm,
-        generateOptions(modelRoute, PHASE2_SYSTEM, userText, cfg.phase2MaxTokens, undefined, [PHASE2_TOOL]),
-        800_000,
-      )
-      // Structured tool call first; fenced text blocks remain a fallback for
-      // models that ignore the tool schema.
-      let nextMemory: string | undefined
-      let nextSummary: string | undefined
-      const toolCall = response.calls.find(call => call.name === 'memory_write')
-      if (toolCall !== undefined) {
-        const args = parseCallArguments(toolCall)
-        if (typeof args.memory_md === 'string' && args.memory_md.trim() !== '') nextMemory = args.memory_md
-        if (typeof args.memory_summary_md === 'string' && args.memory_summary_md.trim() !== '') nextSummary = args.memory_summary_md
-      }
-      if (nextMemory === undefined || nextSummary === undefined) {
-        const blocks = parseFencedBlocks(response.text)
-        nextMemory = pickBlock(blocks, ['memory.md', 'mem.md'])
-        nextSummary = pickBlock(blocks, ['memory_summary.md', 'memory-summary.md', 'summary.md'])
-      }
-      if (nextMemory === undefined || nextSummary === undefined) {
-        throw new Error('整合输出缺少 memory_write 工具调用或带标签的代码块（```MEMORY.md 与 ```memory_summary.md）')
-      }
-      await files.writeAtomic('MEMORY.md', nextMemory.trimEnd() + '\n')
-      await files.writeAtomic('memory_summary.md', ensureSummaryV1(nextSummary).trimEnd() + '\n')
+      const artifacts = await consolidator.consolidate({
+        mode,
+        memoryRoot: files.root,
+        pendingNotes: notes.length,
+        rolloutSummaries,
+        maxRawChars: cfg.maxRawChars,
+        maxTokens: cfg.phase2MaxTokens,
+        route: modelRoute,
+      })
+      await files.writeAtomic('MEMORY.md', artifacts.memoryMd.trimEnd() + '\n')
+      await files.writeAtomic('memory_summary.md', ensureSummaryV1(artifacts.memorySummaryMd).trimEnd() + '\n')
       await files.rotateRaw()
       for (const entry of noteEntries) {
         await files.archiveNote(entry.path).catch(() => {})

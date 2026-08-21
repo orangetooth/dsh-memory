@@ -50,6 +50,15 @@ describe('real Cordis Loader composition', () => {
       timeout: () => () => {},
       debounce: (callback: () => void) => Object.assign(() => {}, { dispose: () => {}, callback }),
     })
+    context.provide('subagents', {
+      getProvider: () => ({
+        capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+        inheritsParentContext: false,
+      }),
+      start: async () => {
+        throw new Error('loader smoke test must not start a subagent')
+      },
+    })
     context.provide('storage', {
       backend: {
         get: (form: string) => (form === 'json' ? { kv: fakeKv().facility } : undefined),

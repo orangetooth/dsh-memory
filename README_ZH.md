@@ -18,16 +18,18 @@
 **少听重复的偏好说明、少走弯路、复用被验证过的工作流、避开已知的坑**。
 
 设计参考了 Codex 记忆系统（两阶段提取/整合、三级制品结构、任务租约、冷却、脱敏），
-并针对 DSH 重新组合：不需要 SQLite、不需要 git 基线、不需要常驻整合子代理。
+并针对 DSH 重新组合：不需要 SQLite、不需要 git 基线；Phase 2 使用 Harness 自带的
+进程内一次性子 agent，不需要额外部署常驻进程或独立记忆服务。
 
 ## 功能特性
 
 - 🧠 **Phase 1 逐会话提取**：会话结束后（防抖，默认 3 分钟）读取会话日志，过滤渲染 →
   脱敏 → 交给模型提取结构化记忆（`raw_memory` + `rollout_summary` + `slug`）；
   无价值的会话输出空结果自动跳过（no-op 门槛）。
-- 🧩 **Phase 2 全局整合**：按冷却周期（默认 6 小时）把新记忆合并进 `MEMORY.md`
-  （检索手册）与 `memory_summary.md`（首行 `v1` 协议的高密度导航摘要）；
-  原始记忆归档轮转，永不重复整合。
+- 🧩 **Phase 2 受限 agent 整合**：按冷却周期（默认 6 小时）启动 Harness 内置的
+  fresh in-process `spawn` child；它不继承父会话，只能用 `memory_list` / `memory_read` /
+  `memory_search` 渐进检索证据，通过原生结构化输出交回 `MEMORY.md` 与
+  `memory_summary.md`，再由插件校验并原子写入；原始记忆成功后才归档轮转。
 - 📥 **摘要常驻注入**：`memory_summary.md` 内容（有硬上限保护）随 system prompt 注入
   每次会话，模型无需任何操作就能看到导航索引。
 - 🔍 **四个记忆工具**：`memory_list` / `memory_read` / `memory_search` /
@@ -45,7 +47,7 @@
                                           │
                               （冷却到期 / 有新记忆）
                                           ▼
-                                   Phase 2（全局）
+                         Phase 2（受限进程内一次性 agent）
                                           │
               ┌───────────────────────────┴───────────────────────────┐
               ▼                                                       ▼
@@ -56,6 +58,7 @@
 
 > [!NOTE]
 > 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
+> 插件使用 base bundle 自带的 `subagents` 服务和 `spawn` provider，不需要另装或启动服务。
 >
 > 包名说明：`@nanmicoder/dsh-memory` 是包标识（`@nanmicoder` 是 npm 作用域形式，
 > `dsh-memory` 是包名）。本插件**通过 GitHub 分发**（不发布 npm），安装方式如下：
@@ -130,8 +133,8 @@ https://github.com/yan5236/dsh-memory
 | `maxTranscriptChars` | `60000` | 送入提取模型的会话文本上限 |
 | `phase1MaxTokens` | `4096` | 单次提取输出上限 |
 | `consolidationCooldownMs` | `21600000` | 整合冷却（失败后约 15 分钟自动重试，不受冷却限制） |
-| `maxRawChars` | `120000` | 单次整合的原始记忆输入上限 |
-| `phase2MaxTokens` | `12000` | 单次整合输出上限 |
+| `maxRawChars` | `120000` | 整合 agent 单轮扫描 raw memories 的提示预算 |
+| `phase2MaxTokens` | `12000` | 整合 agent 每次模型请求的输出上限 |
 | `maxSummaryChars` | `8000` | 注入摘要的字符上限 |
 | `retryLimit` | `3` | 提取失败重试次数 |
 

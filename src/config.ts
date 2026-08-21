@@ -30,7 +30,7 @@ export interface Config {
   phase1MaxTokens: number
   /** Cooldown between automatic Phase 2 consolidations. */
   consolidationCooldownMs: number
-  /** Hard cap on raw memories fed into one consolidation call. */
+  /** Prompted raw-memory scan budget for one consolidation run. */
   maxRawChars: number
   /** Output token cap for one Phase 2 consolidation call. */
   phase2MaxTokens: number

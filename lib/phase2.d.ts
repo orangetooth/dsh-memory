@@ -1,20 +1,21 @@
 /** Phase 2: global consolidation into MEMORY.md and memory_summary.md. */
 import type { MemoryStateStore } from './bookkeeping.js';
+import type { Phase2Consolidator } from './consolidation-agent.js';
 import type { Config } from './config.js';
 import type { MemoryFiles } from './files.js';
-import type { LlmRuntime, ModelRoute } from './llm.js';
+import type { ModelRoute } from './llm.js';
 export type Phase2Outcome = {
     kind: 'consolidated';
     mode: 'init' | 'incremental';
 } | {
     kind: 'skipped';
-    reason: 'cooldown' | 'no-input' | 'no-route';
+    reason: 'cooldown' | 'no-input' | 'no-route' | 'no-agent' | 'no-provider';
 } | {
     kind: 'error';
     error: string;
 };
 export interface Phase2Deps {
-    llm: LlmRuntime;
+    consolidator: Phase2Consolidator;
     state: MemoryStateStore;
     files: MemoryFiles;
     config: () => Config;

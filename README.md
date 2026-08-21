@@ -20,16 +20,18 @@ failure modes**.
 
 The design is adapted from the Codex memories system (two-phase extraction/consolidation,
 three-layer artifact layout, job claims, cooldown, redaction) and re-composed for DSH: no
-SQLite, no git baseline, no resident consolidation subagent.
+SQLite and no git baseline. Phase 2 uses Harness's built-in one-shot in-process child, so it
+does not require a separately deployed process or memory service.
 
 ## Features
 
 - 🧠 **Phase 1 per-session extraction**: after a session turns stop (debounced, 3 min default),
   its log is read, filtered, rendered, and redacted, then a model extracts structured memory
   (`raw_memory` + `rollout_summary` + `slug`). Low-signal sessions produce an empty no-op.
-- 🧩 **Phase 2 global consolidation**: on a cooldown (6 h default) the new raw memories are
-  merged into `MEMORY.md` (handbook) and `memory_summary.md` (dense index, exact `v1` first
-  line); raw input is rotated into an archive and never consolidated twice.
+- 🧩 **Phase 2 restricted-agent consolidation**: on a cooldown (6 h default), a fresh in-process
+  `spawn` child gets no parent transcript and only `memory_list` / `memory_read` / `memory_search`.
+  It progressively inspects evidence and returns `MEMORY.md` plus `memory_summary.md` through
+  native structured output; the plugin validates and atomically writes them before rotating raw input.
 - 📥 **Always-injected summary**: `memory_summary.md` (hard size cap) is injected through the
   system prompt of every session — zero effort for the model to see the index.
 - 🔍 **Four memory tools**: `memory_list` / `memory_read` / `memory_search` / `memory_add`
@@ -47,7 +49,7 @@ turn end ──► Phase 1 (per session) ──► rollout_summaries/<slug>.md +
                                             │
                               (cooldown elapsed / new memories)
                                             ▼
-                                     Phase 2 (global)
+                           Phase 2 (restricted one-shot agent)
                                             │
               ┌─────────────────────────────┴────────────────────────────┐
               ▼                                                          ▼
@@ -58,6 +60,8 @@ turn end ──► Phase 1 (per session) ──► rollout_summaries/<slug>.md +
 
 > [!NOTE]
 > Requires [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+> The plugin uses the base bundle's built-in `subagents` service and `spawn` provider; there is
+> no additional service to install or run.
 >
 > Naming: `@nanmicoder/dsh-memory` is the package identifier (`@nanmicoder` is the npm-style
 > scope, `dsh-memory` the name). This plugin is **distributed via GitHub** (not npm):

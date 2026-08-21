@@ -279,7 +279,7 @@ function MemorySettings(): React.ReactNode {
   return el('div', { className: 'dm-section' },
     el('p', { className: 'dm-title' }, '长期记忆'),
     el('p', { className: 'dm-intro' },
-      '把会话历史自动提炼为长期记忆：Phase 1 逐会话提取（产出回顾与原始记忆），Phase 2 全局整合进 MEMORY.md 与 memory_summary.md；摘要常驻注入新会话，工具 memory_list/read/search/add 按需检索。'),
+      '把会话历史自动提炼为长期记忆：Phase 1 逐会话提取（产出回顾与原始记忆），Phase 2 由内置受限 agent 渐进检索并整合进 MEMORY.md 与 memory_summary.md；无需额外服务。'),
     el('div', { className: 'dm-card' },
       el('div', { className: 'dm-row' },
         el('span', { className: 'dm-label' }, '记忆库：'),

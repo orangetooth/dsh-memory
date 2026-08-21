@@ -91,6 +91,3 @@ export const PHASE1_JSON = (slug: string): string => JSON.stringify({
   rollout_summary: `# demo summary\n\n## Task 1: demo\n\nOutcome: success\n\nKey steps:\n- ran the pipeline\n`,
   rollout_slug: slug,
 })
-
-export const PHASE2_BLOCKS = (memory: string, summary: string): string =>
-  `\`\`\`MEMORY.md\n${memory}\n\`\`\`\n\`\`\`memory_summary.md\n${summary}\n\`\`\`\n`

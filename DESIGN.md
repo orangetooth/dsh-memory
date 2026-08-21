@@ -8,8 +8,8 @@ consolidation pipeline adapted from the Codex memories system onto DSH primitive
 path that injects a dense summary into every session and exposes four retrieval tools.
 
 The plugin owns its memory directory and its KV-backed bookkeeping. It never rewrites session
-logs, never touches the agent preset or the prompt template, and runs entirely asynchronously
-after session boundaries.
+logs or touches the deployment agent preset. Phase 1 calls the LLM directly; Phase 2 runs a
+fresh, one-shot in-process child through the Harness subagent seam after session boundaries.
 
 ## Decision record
 
@@ -18,7 +18,7 @@ Confirmed with the user before implementation (2026-02):
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Memory root | `$DSH_HOME/memories` (configurable) | Codex-style global consolidation; workspace context is preserved per rollout instead |
-| Phase 2 executor | Direct `llm.stream` call | Lightweight, retryable, no subagent quota cost; consolidation is one bounded prompt |
+| Phase 2 executor | Built-in `spawn` one-shot subagent | Matches Codex's dedicated consolidation-agent behavior without a separate service; supports progressive evidence reads and a strict per-child tool allowlist |
 | Read path | Summary injected + tools on demand | `memory_summary.md` is token-budgeted navigation; details stay in MEMORY.md / rollout summaries |
 | Trigger | Startup catch-up + turn-end debounce | Codex startup task plus DSH event-driven freshness; idle debounce doubles as the "idle long enough" guard |
 
@@ -34,8 +34,10 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
                                                     (cooldown, pending flag)
                                                                   ▼
                                           Phase 2 (global, single-flight)
-                                                      ├─ llm consolidate (INIT / INCREMENTAL)
-                                                      ├─ write MEMORY.md + memory_summary.md (v1)
+                                                      ├─ spawn fresh in-process child
+                                                      ├─ allow memory_list/read/search only
+                                                      ├─ validate structured artifacts
+                                                      ├─ atomically write MEMORY.md + summary
                                                       └─ rotate raw_memories.md → archive
                                                                   │
                                                                   ▼
@@ -50,7 +52,7 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
 | state DB (`threads`, `stage1_outputs`, `jobs`) | storage hub KV (`json` backend): claims, cooldown, pending flag, overrides |
 | rollout JSONL files | session logs via `sessionQuery.readSession` / `sessionPersistence.load` |
 | startup task, stage-1 job leases, retry backoff | boot catch-up + `agent/turn-stopping` debounce; per-session claims with backoff and restart recovery |
-| global Phase 2 lock + 6h cooldown | in-process single-flight + configurable cooldown (default 6h) |
+| global Phase 2 lock + dedicated agent + 6h cooldown | in-process single-flight + configurable cooldown + fresh `spawn` child |
 | `~/.codex/memories` + git baseline | `$DSH_HOME/memories`; atomic writes (temp + rename); no git dependency |
 | developer-policy injection + `list`/`read`/`search`/`add_ad_hoc_note` | `systemPrompt.section` with a per-assembly provider + `memory_list`/`memory_read`/`memory_search`/`memory_add` |
 | secret redaction, no-op gate, `v1` first-line protocol | kept: redaction on both input and output, empty-field no-op, exact `v1` first line |
@@ -86,8 +88,9 @@ when the KV backend is unavailable the store degrades to process-local state.
   out sessions older than `maxRolloutAgeDays`, extracts with bounded concurrency, then sets
   `pendingConsolidation`.
 - Phase 2 runs after any successful extraction, pending flag, or unconsumed ad hoc notes,
-  subject to the cooldown; failures record `phase2Error` and retry on the next scheduled window
-  or manually.
+  subject to the cooldown. It waits without consuming input when no live root agent or capable
+  fresh provider exists. Agent failures record `phase2Error` and retry on the next scheduled
+  window or manually.
 
 ### Incremental extraction
 
@@ -99,14 +102,15 @@ full re-extraction; legacy `done` claims only get their watermark baselined (the
 already consolidated). The model input for a delta states explicitly that earlier content was
 already processed.
 
-### Structured tool-constrained output
+### Structured output and restricted consolidation agent
 
-Both phases constrain model output through the native function-calling channel
-(`GenerateOptions.tools`): Phase 1 must call `memory_save` with `raw_memory`,
-`rollout_summary`, `rollout_slug`; Phase 2 must call `memory_write` with `memory_md` and
-`memory_summary_md`. The plugin writes files itself; the model only fills structured arguments.
-Free-text parsing remains as a fallback for models that ignore tool schemas. Phase 1 also
-retries once with a halved transcript when output is truncated.
+Phase 1 constrains direct model output through `GenerateOptions.tools`: it must call
+`memory_save` with `raw_memory`, `rollout_summary`, and `rollout_slug`, with a free-text fallback
+for adapters that ignore tool schemas. Phase 2 instead uses the subagent seam's native
+`outputSchema`; a fresh child progressively reads the memory workspace, then returns
+`memory_md` and `memory_summary_md`. The parent plugin is the only writer and rejects missing,
+empty, abnormal, or non-completed results. Phase 1 also retries once with a halved transcript
+when output is truncated.
 
 ### Ad hoc notes
 
@@ -124,18 +128,24 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
   `password/secret/token/api_key`-style assignments.
 - Memory tools resolve paths inside the memory root only; traversal and absolute paths are
   rejected before any filesystem call.
+- The Phase 2 child inherits no parent transcript. `toolFilter.allow` contains only
+  `memory_list`, `memory_read`, and `memory_search`, excluding shell, web, general filesystem,
+  `memory_add`, and recursive delegation tools. Its only write-shaped capability is the scoped
+  structured result, which the parent validates before two fixed-path atomic writes.
 - The consolidation prompt demands the exact `v1` first line and the plugin enforces it
   mechanically (`ensureSummaryV1`).
-- Consolidation output is bounded by `phase2MaxTokens`; injected summaries by `maxSummaryChars`;
-  transcripts by `maxTranscriptChars`; raw input by `maxRawChars`. Every model input has a cap.
+- Each consolidation-agent request is bounded by `phase2MaxTokens`; injected summaries by
+  `maxSummaryChars`; Phase 1 transcripts by `maxTranscriptChars`. `maxRawChars` is the explicit
+  scan budget stated to the progressive Phase 2 agent rather than an eager prompt slice.
 
 ## Failure modes and recovery
 
 | Failure | Behavior |
 | --- | --- |
 | No model route | Pipeline skips with `skippedNoRoute`; no state damage; retried on next trigger |
+| No live root agent / capable fresh provider | Consolidation skips without changing cooldown or pending input |
 | Extraction call fails | Claim marked failed with backoff; `retryLimit` attempts, then parked |
-| Consolidation output malformed | Raw memories preserved, `phase2Error` recorded, pending flag kept |
+| Consolidation child fails or structured output is malformed | Raw memories preserved, `phase2Error` recorded, pending flag kept; child is disposed |
 | Process restart mid-extraction | Orphaned `running` claims recover as failed and retry |
 | KV backend missing | Claims stay process-local; pipeline still runs without cross-restart durability |
 | Session log unreadable | That session's claim fails; other candidates unaffected |
@@ -143,10 +153,10 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
 ## Coverage boundary
 
 The plugin reads session logs through the public query surface and writes only inside its own
-memory root. It does not modify session history, the agent preset, prompt templates, or other
-plugins' storage. Extraction runs only for root (non-subagent) sessions; subagent work is
-already summarized inside its parent's log. Model routing falls back to the deployment default
-model (`agentDefaultModel`) when no dedicated route is configured. The client page is a
+memory root. It does not modify session history, the deployment agent preset, or other plugins'
+storage. Extraction runs only for root (non-subagent) sessions; the plugin-created consolidation
+child is therefore never fed back into Phase 1. Model routing falls back to the deployment
+default model (`agentDefaultModel`) when no dedicated route is configured. The client page is a
 configuration and observation surface only; it does not gate any security boundary.
 
 ## Prior art

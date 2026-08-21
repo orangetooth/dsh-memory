@@ -15,6 +15,7 @@ export declare const inject: string[];
 export { Config, DEFAULTS, clampOverrides, OVERRIDABLE_KEYS, resolveConfig } from './config.js';
 export type { Config as MemoryConfig, OverridableKey } from './config.js';
 export { MemoryStateStore, type KvFacilityLike, type KvUnitLike } from './bookkeeping.js';
+export { HarnessConsolidationAgent, READ_ONLY_MEMORY_TOOLS, type ConsolidationArtifacts, type ConsolidationRequest, type ConsolidatorReadiness, type HarnessConsolidationAgentDeps, type Phase2Consolidator, type SubagentRuntimeLike, } from './consolidation-agent.js';
 export { MemoryFiles, ensureSummaryV1 } from './files.js';
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js';
 export { collectResponse, collectText, collectTextDetails, extractJsonObject, generateOptions, LlmCallError, parseCallArguments, parseFencedBlocks, pickBlock, resolveRoute, stripFences, } from './llm.js';
@@ -22,7 +23,7 @@ export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, Model
 export { defaultMemoryRoot, isWithin, resolveMemoryRoot, sanitizeSlug } from './paths.js';
 export { Phase1Runner, type Phase1Deps, type Phase1Summary } from './phase1.js';
 export { Phase2Runner, type Phase2Deps, type Phase2Outcome } from './phase2.js';
-export { PHASE1_SYSTEM, PHASE1_TOOL, PHASE2_SYSTEM, PHASE2_TOOL, phase1User, phase2User } from './prompts.js';
+export { PHASE1_SYSTEM, PHASE1_TOOL, PHASE2_OUTPUT_SCHEMA, PHASE2_SYSTEM, PHASE2_TOOL, phase1User, phase2User } from './prompts.js';
 export type { Phase1InputMeta, Phase2Input } from './prompts.js';
 export { redactSecrets, renderEvent, renderTranscript, selectCandidates } from './rollout.js';
 export type { SelectionOptions, SelectionResult, TranscriptOptions } from './rollout.js';

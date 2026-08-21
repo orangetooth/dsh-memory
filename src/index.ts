@@ -10,7 +10,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { SubagentRuntime, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { MemoryStateStore, type KvFacilityLike } from './bookkeeping.js'
+import { HarnessConsolidationAgent } from './consolidation-agent.js'
 import { Config, resolveConfig } from './config.js'
 import type { Config as ConfigShape } from './config.js'
 import { MemoryFiles } from './files.js'
@@ -26,11 +28,16 @@ import type { SessionHeaderLite, SessionReader } from './types.js'
 import { messageOf } from './util.js'
 
 export const name = 'dsh-memory'
-export const inject = ['llm', 'timer']
+export const inject = ['llm', 'timer', 'subagents', 'tools']
 
 export { Config, DEFAULTS, clampOverrides, OVERRIDABLE_KEYS, resolveConfig } from './config.js'
 export type { Config as MemoryConfig, OverridableKey } from './config.js'
 export { MemoryStateStore, type KvFacilityLike, type KvUnitLike } from './bookkeeping.js'
+export {
+  HarnessConsolidationAgent, READ_ONLY_MEMORY_TOOLS,
+  type ConsolidationArtifacts, type ConsolidationRequest, type ConsolidatorReadiness,
+  type HarnessConsolidationAgentDeps, type Phase2Consolidator, type SubagentRuntimeLike,
+} from './consolidation-agent.js'
 export { MemoryFiles, ensureSummaryV1 } from './files.js'
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js'
 export {
@@ -41,7 +48,7 @@ export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, Model
 export { defaultMemoryRoot, isWithin, resolveMemoryRoot, sanitizeSlug } from './paths.js'
 export { Phase1Runner, type Phase1Deps, type Phase1Summary } from './phase1.js'
 export { Phase2Runner, type Phase2Deps, type Phase2Outcome } from './phase2.js'
-export { PHASE1_SYSTEM, PHASE1_TOOL, PHASE2_SYSTEM, PHASE2_TOOL, phase1User, phase2User } from './prompts.js'
+export { PHASE1_SYSTEM, PHASE1_TOOL, PHASE2_OUTPUT_SCHEMA, PHASE2_SYSTEM, PHASE2_TOOL, phase1User, phase2User } from './prompts.js'
 export type { Phase1InputMeta, Phase2Input } from './prompts.js'
 export { redactSecrets, renderEvent, renderTranscript, selectCandidates } from './rollout.js'
 export type { SelectionOptions, SelectionResult, TranscriptOptions } from './rollout.js'
@@ -71,6 +78,8 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   if (llm === undefined) throw new Error('dsh-memory requires the llm service')
   const timer = ctx.get('timer') as TimerService | undefined
   if (timer === undefined) throw new Error('dsh-memory requires the timer service')
+  const subagents = ctx.get('subagents') as SubagentRuntime | undefined
+  if (subagents === undefined) throw new Error('dsh-memory requires the subagents service')
 
   const getKv = (): KvFacilityLike | undefined => {
     const storage = ctx.get('storage') as { backend?: { get?: (form: string) => unknown } } | undefined
@@ -114,8 +123,10 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
     return resolveRoute(configNow(), selection)
   }
 
+  let rootAgent: SubagentStartRequest['parent'] | undefined
+  const consolidator = new HarnessConsolidationAgent({ subagents, parent: () => rootAgent })
   const phase1 = new Phase1Runner({ llm, state, files, sessions: sessionReader, config: configNow, route: routeNow })
-  const phase2 = new Phase2Runner({ llm, state, files, config: configNow, route: routeNow })
+  const phase2 = new Phase2Runner({ consolidator, state, files, config: configNow, route: routeNow })
   const injection = new MemoryInjection(files, configNow)
 
   const log = (text: string): void => {
@@ -152,18 +163,22 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   // Root-session lifecycle: Codex wakes the pipeline at root session start;
   // we additionally schedule after each root turn stops (debounced = idle guard).
   let lastSessionStartTrigger = 0
-  const isRoot = (payload: { agent?: { session?: { header?: { origin?: string } } } }): boolean =>
-    payload.agent?.session?.header?.origin !== 'subagent'
-  ctx.on('agent/turn-stopping', (payload: { agent?: { session?: { header?: { origin?: string } } } }) => {
-    if (!isRoot(payload)) return
+  const isRoot = (agent: SubagentStartRequest['parent']): boolean => agent.session.header.origin !== 'subagent'
+  ctx.on('agent/turn-stopping', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
+    if (!isRoot(agent)) return
+    rootAgent = agent
     triggerFromTurn()
   })
-  ctx.on('agent/session-start', (payload: { agent?: { session?: { header?: { origin?: string } } } }) => {
-    if (!isRoot(payload)) return
+  ctx.on('agent/session-start', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
+    if (!isRoot(agent)) return
+    rootAgent = agent
     const now = Date.now()
     if (now - lastSessionStartTrigger < 60_000) return
     lastSessionStartTrigger = now
     runSoon()
+  })
+  ctx.on('agent/disposed', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
+    if (rootAgent === agent) rootAgent = undefined
   })
 
   // Optional services: react to late mounting through the cordis service event.
