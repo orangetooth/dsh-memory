@@ -41,7 +41,7 @@
 - ⚙️ **设置页**：设置 → 长期记忆 中查看统计、手动触发提取/整合、调整冷却与模型路由。
 - 🧭 **原版阶段推理等级**：忠实采用 Codex 的 Phase 1 `low`、Phase 2 `medium`；若模型
   不提供该档位，按能力目录映射到最接近的可用档（距离相同时优先更高档），设置页显示
-  实际映射结果。例如 DeepSeek 的 `off/high/max` 会映射为 `low→high`、`medium→high`。
+  实际映射结果。例如某适配器若只有 `off/high/max`，会映射为 `low→high`、`medium→high`。
 
 ## 工作原理
 

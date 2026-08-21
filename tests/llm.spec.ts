@@ -35,7 +35,7 @@ describe('memory-stage reasoning', () => {
     expect((await resolveStageRoute(runtime, route, PHASE2_REASONING)).reasoningEffort).toBe('medium')
   })
 
-  it('maps both Codex stages to DeepSeek high instead of disabling reasoning', async () => {
+  it('maps both stages to high when an adapter offers only off/high/max', async () => {
     const runtime = runtimeWith(['off', 'high', 'max'], 'max')
     const route = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
     const phase1 = await resolveStageRoute(runtime, route, PHASE1_REASONING)

@@ -38,7 +38,8 @@ does not require a separately deployed process or memory service.
   (writes only on explicit user request).
 - 🧭 **Codex stage reasoning**: Phase 1 targets `low`, Phase 2 targets `medium`; when an adapter
   does not expose that exact level, the plugin selects the nearest advertised effort and prefers
-  the higher level on a tie. DeepSeek's `off/high/max` therefore resolves both stages to `high`.
+  the higher level on a tie. An adapter exposing only `off/high/max` therefore resolves both
+  stages to `high`.
 - 🔒 **Safety discipline**: session content is treated as data, never instructions; secrets are
   redacted on both input and output; memory paths are confined to the memory root.
 - 🔁 **Reliable scheduling**: one durable claim per session (KV-persisted); restarts never
