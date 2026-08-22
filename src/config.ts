@@ -56,7 +56,7 @@ export const DEFAULTS: Config = {
   phase1MaxTokens: 16_384,
   consolidationCooldownMs: 6 * 60 * 60_000,
   maxRawChars: 120_000,
-  phase2MaxTokens: 12_000,
+  phase2MaxTokens: 65_535,
   maxSummaryChars: 8_000,
   retryLimit: 3,
 }
@@ -131,7 +131,7 @@ const RANGES: Record<OverridableKey, readonly [number, number]> = {
   phase1MaxTokens: [256, 16_384],
   consolidationCooldownMs: [60_000, 7 * 24 * 60 * 60_000],
   maxRawChars: [10_000, 500_000],
-  phase2MaxTokens: [512, 32_768],
+  phase2MaxTokens: [512, 65_535],
   maxSummaryChars: [1_000, 50_000],
   retryLimit: [1, 10],
 }

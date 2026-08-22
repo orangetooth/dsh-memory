@@ -137,7 +137,7 @@ https://github.com/yan5236/dsh-memory
 | `phase1MaxTokens` | `16384` | 单次提取输出上限（同时容纳会话回顾与原始记忆） |
 | `consolidationCooldownMs` | `21600000` | 整合冷却（失败后约 15 分钟自动重试，不受冷却限制） |
 | `maxRawChars` | `120000` | 整合 agent 单轮扫描 raw memories 的提示预算 |
-| `phase2MaxTokens` | `12000` | 整合 agent 每次模型请求的输出上限 |
+| `phase2MaxTokens` | `65535` | 整合 agent 每次模型请求的输出上限（为推理与完整制品预留空间） |
 | `maxSummaryChars` | `8000` | 注入摘要的字符上限 |
 | `retryLimit` | `3` | 提取失败重试次数 |
 

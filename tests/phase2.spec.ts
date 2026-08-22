@@ -125,6 +125,7 @@ describe('Phase2Runner', () => {
       memoryRoot: h.files.root,
       pendingNotes: 1,
       rolloutSummaries: 1,
+      maxTokens: 65_535,
       route: { provider: 'mock', model: 'mock' },
     })
     expect(JSON.stringify(h.calls[0])).not.toContain('private raw evidence')

@@ -124,7 +124,7 @@ function MemorySettings(): React.ReactNode {
       provider: String(cfg.provider ?? ''),
       model: String(cfg.model ?? ''),
       phase1MaxTokens: Number(cfg.phase1MaxTokens ?? 16384),
-      phase2MaxTokens: Number(cfg.phase2MaxTokens ?? 12000),
+      phase2MaxTokens: Number(cfg.phase2MaxTokens ?? 65535),
       manualModel: prev?.manualModel === true,
     }))
   }
@@ -231,7 +231,7 @@ function MemorySettings(): React.ReactNode {
       provider: String(form.provider ?? ''),
       model: String(form.model ?? ''),
       phase1MaxTokens: Number(form.phase1MaxTokens ?? 16384),
-      phase2MaxTokens: Number(form.phase2MaxTokens ?? 12000),
+      phase2MaxTokens: Number(form.phase2MaxTokens ?? 65535),
     }, '配置已保存，并持久化到 DSH 存储。')
   }
 
@@ -338,7 +338,7 @@ function MemorySettings(): React.ReactNode {
         num('每轮处理会话数', 'maxRolloutsPerRun', '每次管道运行提取的会话数上限'),
         num('注入摘要上限（字符）', 'maxSummaryChars', 'memory_summary.md 注入 system prompt 的截断上限'),
         num('提取输出 token 上限', 'phase1MaxTokens', '默认 16384，容纳会话回顾与原始记忆'),
-        num('整合输出 token 上限', 'phase2MaxTokens')),
+        num('整合输出 token 上限', 'phase2MaxTokens', '默认 65535；为 high 思考与完整结构化结果保留足够空间')),
       el('div', { className: 'dm-grid' },
         el('div', { className: 'dm-field' },
           el('div', { className: 'dm-label' }, '记忆管道模型提供方（可选）'),

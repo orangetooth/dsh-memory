@@ -143,7 +143,8 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
   structured result, which the parent validates before two fixed-path atomic writes.
 - The consolidation prompt demands the exact `v1` first line and the plugin enforces it
   mechanically (`ensureSummaryV1`).
-- Each consolidation-agent request is bounded by `phase2MaxTokens`; injected summaries by
+- Each consolidation-agent request is bounded by `phase2MaxTokens` (default 65535, matching the
+  validated DeepSeek route output ceiling rather than imposing an early 12000-token cutoff); injected summaries by
   `maxSummaryChars`; Phase 1 transcripts by `maxTranscriptChars` and extraction output by
   `phase1MaxTokens` (default 16384). `maxRawChars` is the explicit
   scan budget stated to the progressive Phase 2 agent rather than an eager prompt slice.
