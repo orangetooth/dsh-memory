@@ -20,6 +20,7 @@ import { MemoryInjection, type SystemPromptRuntime } from './inject.js'
 import type { LlmRuntime, ModelRoute } from './llm.js'
 import { resolveRoute } from './llm.js'
 import { resolveMemoryRoot } from './paths.js'
+import { MemoryParent, type AgentRegistryRuntimeLike } from './memory-parent.js'
 import { Phase1Runner } from './phase1.js'
 import { Phase2Runner } from './phase2.js'
 import { registerRpc, type WebServerRuntime } from './rpc.js'
@@ -28,7 +29,7 @@ import type { SessionHeaderLite, SessionReader } from './types.js'
 import { messageOf } from './util.js'
 
 export const name = 'dsh-memory'
-export const inject = ['llm', 'timer', 'subagents', 'tools']
+export const inject = ['agents', 'llm', 'timer', 'subagents', 'tools']
 
 export { Config, DEFAULTS, clampOverrides, OVERRIDABLE_KEYS, resolveConfig } from './config.js'
 export type { Config as MemoryConfig, OverridableKey } from './config.js'
@@ -40,6 +41,10 @@ export {
 } from './consolidation-agent.js'
 export { MemoryFiles, ensureSummaryV1 } from './files.js'
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js'
+export {
+  MEMORY_PARENT_ID_PREFIX, MEMORY_PARENT_TITLE, MemoryParent,
+  type AgentRegistryRuntimeLike, type MemoryParentHandleLike,
+} from './memory-parent.js'
 export {
   collectResponse, collectText, collectTextDetails, extractJsonObject, generateOptions,
   LlmCallError, parseCallArguments, parseFencedBlocks, PHASE1_REASONING, PHASE2_REASONING,
@@ -81,6 +86,8 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   if (timer === undefined) throw new Error('dsh-memory requires the timer service')
   const subagents = ctx.get('subagents') as SubagentRuntime | undefined
   if (subagents === undefined) throw new Error('dsh-memory requires the subagents service')
+  const agents = ctx.get('agents') as AgentRegistryRuntimeLike | undefined
+  if (agents === undefined) throw new Error('dsh-memory requires the agents service')
 
   const getKv = (): KvFacilityLike | undefined => {
     const storage = ctx.get('storage') as { backend?: { get?: (form: string) => unknown } } | undefined
@@ -90,13 +97,16 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
 
   const state = new MemoryStateStore(getKv)
   const files = new MemoryFiles(resolveMemoryRoot(base.memoryRoot))
+  const memoryParent = new MemoryParent(agents, state, files.root)
   const configNow = (): ConfigShape => resolveConfig(base, state.snapshot().overrides)
 
   const sessionReader = (): SessionReader | undefined => {
     const query = ctx.get('sessionQuery') as SessionQueryLike | undefined
     if (query?.listSessions !== undefined && query.readSession !== undefined) {
       return {
-        listSessions: async () => (await query.listSessions!()).map(record => record.header as SessionHeaderLite),
+        listSessions: async () => (await query.listSessions!())
+          .map(record => record.header as SessionHeaderLite)
+          .filter(header => header.id !== state.memoryParentSessionId),
         readSession: async id => {
           const snapshot = await query.readSession!(id)
           return { session: snapshot.session as SessionHeaderLite, events: snapshot.events }
@@ -106,7 +116,8 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
     const persistence = ctx.get('sessionPersistence') as SessionPersistenceLike | undefined
     if (persistence?.list !== undefined && persistence.load !== undefined) {
       return {
-        listSessions: async () => (await persistence.list!()) as SessionHeaderLite[],
+        listSessions: async () => ((await persistence.list!()) as SessionHeaderLite[])
+          .filter(header => header.id !== state.memoryParentSessionId),
         readSession: async id => {
           const inspection = await persistence.load!(id)
           return {
@@ -124,14 +135,24 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
     return resolveRoute(configNow(), selection)
   }
 
-  let rootAgent: SubagentStartRequest['parent'] | undefined
   const consolidator = new HarnessConsolidationAgent({
     subagents,
-    parent: () => rootAgent,
+    parent: () => memoryParent.agent,
     agentRequests: ctx as unknown as AgentRequestRuntimeLike,
   })
   const phase1 = new Phase1Runner({ llm, state, files, sessions: sessionReader, config: configNow, route: routeNow })
-  const phase2 = new Phase2Runner({ consolidator, llm, state, files, config: configNow, route: routeNow })
+  const phase2 = new Phase2Runner({
+    consolidator,
+    llm,
+    state,
+    files,
+    config: configNow,
+    route: routeNow,
+    prepare: async () => {
+      await stateReady
+      await memoryParent.ensure()
+    },
+  })
   const injection = new MemoryInjection(files, configNow)
 
   const log = (text: string): void => {
@@ -139,8 +160,10 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   }
 
   const runPipeline = async (): Promise<void> => {
+    await stateReady
     const cfg = configNow()
     if (!cfg.enabled) return
+    await memoryParent.ensure().catch(error => log(`memory parent: ${messageOf(error)}`))
     const summary = await phase1.run()
     if (summary.done > 0 || state.pendingConsolidation || await files.hasPendingNotes()) {
       await phase2.run(false)
@@ -168,22 +191,21 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
   // Root-session lifecycle: Codex wakes the pipeline at root session start;
   // we additionally schedule after each root turn stops (debounced = idle guard).
   let lastSessionStartTrigger = 0
-  const isRoot = (agent: SubagentStartRequest['parent']): boolean => agent.session.header.origin !== 'subagent'
+  const isRoot = (agent: SubagentStartRequest['parent']): boolean =>
+    agent.session.header.origin !== 'subagent' && !memoryParent.matches(agent)
   ctx.on('agent/turn-stopping', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
     if (!isRoot(agent)) return
-    rootAgent = agent
     triggerFromTurn()
   })
   ctx.on('agent/session-start', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
     if (!isRoot(agent)) return
-    rootAgent = agent
     const now = Date.now()
     if (now - lastSessionStartTrigger < 60_000) return
     lastSessionStartTrigger = now
     runSoon()
   })
   ctx.on('agent/disposed', ({ agent }: { agent: SubagentStartRequest['parent'] }) => {
-    if (rootAgent === agent) rootAgent = undefined
+    memoryParent.noticeDisposed(agent)
   })
 
   // Optional services: react to late mounting through the cordis service event.
@@ -215,14 +237,18 @@ export function apply(ctx: Context, config: Partial<ConfigShape> = {}): void {
     ctx.effect(() => disposeRpc)
   })
 
-  ctx.effect(() => () => {
+  ctx.effect(() => async () => {
     injection.dispose()
-    void state.dispose()
+    await memoryParent.dispose()
+    await state.dispose()
   })
 
+  const stateReady = state.init()
   void (async () => {
     try {
-      await state.init()
+      await stateReady
+      await files.ensureLayout()
+      await memoryParent.ensure()
       await injection.reload()
       if (configNow().enabled) runSoon()
     } catch (error: unknown) {

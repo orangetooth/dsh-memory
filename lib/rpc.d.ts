@@ -57,6 +57,7 @@ export interface ModelEntry {
 export interface StatePayload {
     enabled: boolean;
     root: string;
+    memoryParentSessionId: string | null;
     config: Config;
     storage: 'ok' | 'unavailable';
     storageError: string;

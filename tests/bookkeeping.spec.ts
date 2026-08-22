@@ -28,6 +28,7 @@ describe('MemoryStateStore', () => {
     await first.init()
     first.claimDone('s1', 'slug')
     first.setPendingConsolidation(true)
+    first.setMemoryParentSessionId('dsh-memory-parent-stable')
     first.setOverrides({ maxRolloutsPerRun: 9 })
     await first.dispose()
 
@@ -35,6 +36,7 @@ describe('MemoryStateStore', () => {
     await second.init()
     expect(second.processedOf('s1')).toMatchObject({ status: 'done', slug: 'slug' })
     expect(second.pendingConsolidation).toBe(true)
+    expect(second.memoryParentSessionId).toBe('dsh-memory-parent-stable')
     expect(second.snapshot().overrides.maxRolloutsPerRun).toBe(9)
     await second.dispose()
   })

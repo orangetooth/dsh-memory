@@ -50,6 +50,8 @@ export declare class MemoryStateStore {
     claimNoop(id: string): void;
     claimFailed(id: string, error: string): void;
     get pendingConsolidation(): boolean;
+    get memoryParentSessionId(): string | undefined;
+    setMemoryParentSessionId(id: string): void;
     setPendingConsolidation(value: boolean): void;
     get lastPhase2At(): number;
     get phase2Error(): string | undefined;

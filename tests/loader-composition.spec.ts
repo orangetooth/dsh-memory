@@ -62,6 +62,30 @@ describe('real Cordis Loader composition', () => {
         throw new Error('loader smoke test must not start a subagent')
       },
     })
+    context.provide('agents', {
+      get: () => undefined,
+      async resume() {
+        throw new Error('session not found')
+      },
+      async create({ sessionId, meta }: { sessionId: string; meta: { cwd: string } }) {
+        const events: Array<{ type: string; data: unknown }> = []
+        const session = {
+          header: { id: sessionId, cwd: meta.cwd },
+          events,
+          append(type: string, data: unknown) {
+            events.push({ type, data })
+          },
+        }
+        return {
+          agent: {
+            id: sessionId,
+            session,
+            ctx: { get: () => undefined },
+          },
+          async dispose() {},
+        }
+      },
+    })
     context.provide('storage', {
       backend: {
         get: (form: string) => (form === 'json' ? { kv: fakeKv().facility } : undefined),
@@ -103,6 +127,9 @@ describe('real Cordis Loader composition', () => {
     } as unknown as NonNullable<typeof context.loader.internal>
     await context.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
     await context.loader.await()
+    // The plugin's durable-state restore and parent creation are intentionally
+    // background startup work; let that microtask chain settle before RPC QA.
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     // Memory tools are registered on the host tool registry.
     for (const tool of ['memory_list', 'memory_read', 'memory_search', 'memory_add']) {
@@ -131,8 +158,9 @@ describe('real Cordis Loader composition', () => {
       },
     }
     await route!.handler(req, res)
-    const payload = JSON.parse(ended) as { root?: string; enabled?: boolean }
+    const payload = JSON.parse(ended) as { root?: string; enabled?: boolean; memoryParentSessionId?: string | null }
     expect(payload.root).toBe(memoryRoot)
     expect(payload.enabled).toBe(true)
+    expect(payload.memoryParentSessionId).toMatch(/^dsh-memory-parent-/)
   })
 })

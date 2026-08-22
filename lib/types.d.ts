@@ -20,6 +20,8 @@ export interface SessionClaim {
 export interface MemoryState {
     v: 1;
     processed: Record<string, SessionClaim>;
+    /** Stable identity of the plugin-owned root session for Phase 2 children. */
+    memoryParentSessionId?: string;
     lastPhase1At: number;
     lastPhase2At: number;
     phase2Error?: string;

@@ -21,6 +21,8 @@ export interface Phase2Deps {
   files: MemoryFiles
   config: () => Config
   route: () => ModelRoute | undefined
+  /** Ensure the dedicated parent agent exists before checking readiness. */
+  prepare?: () => Promise<void>
   /** Injectable clock for tests. */
   now?: () => number
 }
@@ -70,11 +72,12 @@ export class Phase2Runner {
     const memory = (await files.readIfExists('MEMORY.md')) ?? ''
     const summary = (await files.readIfExists('memory_summary.md')) ?? ''
     const mode: 'init' | 'incremental' = memory.trim() === '' && summary.trim() === '' ? 'init' : 'incremental'
-    const readiness = consolidator.readiness()
-    if (readiness !== 'ready') return { kind: 'skipped', reason: readiness }
     const rolloutSummaries = (await files.listTree('rollout_summaries'))
       .filter(entry => entry.kind === 'file' && entry.path.endsWith('.md')).length
     try {
+      await this.deps.prepare?.()
+      const readiness = consolidator.readiness()
+      if (readiness !== 'ready') return { kind: 'skipped', reason: readiness }
       const artifacts = await consolidator.consolidate({
         mode,
         memoryRoot: files.root,

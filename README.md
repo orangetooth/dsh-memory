@@ -32,6 +32,9 @@ does not require a separately deployed process or memory service.
   `spawn` child gets no parent transcript and only `memory_list` / `memory_read` / `memory_search`.
   It progressively inspects evidence and returns `MEMORY.md` plus `memory_summary.md` through
   native structured output; the plugin validates and atomically writes them before rotating raw input.
+- 🧵 **Dedicated memory parent**: the plugin creates and cold-resumes one blank top-level session
+  rooted at the memory directory. Every Phase 2 child hangs from that parent instead of the most
+  recently active business session, so project presets, instructions, and parent history cannot leak in.
 - 📥 **Always-injected summary**: `memory_summary.md` (hard size cap) is injected through the
   system prompt of every session — zero effort for the model to see the index.
 - 🔍 **Four memory tools**: `memory_list` / `memory_read` / `memory_search` / `memory_add`

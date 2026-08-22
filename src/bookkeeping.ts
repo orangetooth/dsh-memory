@@ -217,6 +217,16 @@ export class MemoryStateStore {
     return this.state.pendingConsolidation
   }
 
+  get memoryParentSessionId(): string | undefined {
+    return this.state.memoryParentSessionId
+  }
+
+  setMemoryParentSessionId(id: string): void {
+    if (this.state.memoryParentSessionId === id) return
+    this.state.memoryParentSessionId = id
+    this.queueSave()
+  }
+
   setPendingConsolidation(value: boolean): void {
     if (this.state.pendingConsolidation === value) return
     this.state.pendingConsolidation = value

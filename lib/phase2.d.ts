@@ -21,6 +21,8 @@ export interface Phase2Deps {
     files: MemoryFiles;
     config: () => Config;
     route: () => ModelRoute | undefined;
+    /** Ensure the dedicated parent agent exists before checking readiness. */
+    prepare?: () => Promise<void>;
     /** Injectable clock for tests. */
     now?: () => number;
 }

@@ -52,7 +52,7 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
 | state DB (`threads`, `stage1_outputs`, `jobs`) | storage hub KV (`json` backend): claims, cooldown, pending flag, overrides |
 | rollout JSONL files | session logs via `sessionQuery.readSession` / `sessionPersistence.load` |
 | startup task, stage-1 job leases, retry backoff | boot catch-up + `agent/turn-stopping` debounce; per-session claims with backoff and restart recovery |
-| global Phase 2 lock + dedicated agent + 6h cooldown | in-process single-flight + configurable cooldown + fresh `spawn` child |
+| global Phase 2 lock + dedicated agent + 6h cooldown | in-process single-flight + configurable cooldown + stable memory-root parent + fresh `spawn` child |
 | Phase 1 `low` reasoning / Phase 2 `medium` reasoning | exact stage targets mapped through `resolveModelInfo`; nearest supported effort, higher on ties |
 | `~/.codex/memories` + git baseline | `$DSH_HOME/memories`; atomic writes (temp + rename); no git dependency |
 | developer-policy injection + `list`/`read`/`search`/`add_ad_hoc_note` | `systemPrompt.section` with a per-assembly provider + `memory_list`/`memory_read`/`memory_search`/`memory_add` |
@@ -73,7 +73,7 @@ session logs ──(sessionQuery/sessionPersistence)──► Phase 1 (per sessi
 
 ### Bookkeeping
 
-One KV record holds `{ processed: sessionId → claim, lastPhase1At, lastPhase2At, phase2Error,
+One KV record holds `{ processed: sessionId → claim, memoryParentSessionId, lastPhase1At, lastPhase2At, phase2Error,
 pendingConsolidation, overrides }`. Claims are `running | done | noop | failed(attempts)`, so a
 restart never re-extracts a session, never re-runs consolidation inside the cooldown, and
 persisted `running` claims recover immediately on restart; a live-process claim is also released
@@ -83,15 +83,18 @@ when the KV backend is unavailable the store degrades to process-local state.
 
 ### Scheduler
 
-- Boot: one delayed pipeline run (4s), then once per root `agent/session-start` (throttled 60s).
+- Boot: cold-resume (or first-run create) the dedicated blank memory parent, then one delayed
+  pipeline run (4s), then once per business root `agent/session-start` (throttled 60s).
 - Every root `agent/turn-stopping`: debounced run (default 3 min) — the debounce is the
   "session idle long enough" gate that prevents summarizing active sessions.
 - Phase 1 selects root sessions only (subagent sessions excluded), skips processed ones, ages
   out sessions older than `maxRolloutAgeDays`, extracts with bounded concurrency, then sets
   `pendingConsolidation`.
 - Phase 2 runs after any successful extraction, pending flag, or unconsumed ad hoc notes,
-  subject to the cooldown. It waits without consuming input when no live root agent or capable
-  fresh provider exists. Agent failures record `phase2Error` and retry on the next scheduled
+  subject to the cooldown. Every child is attached to the plugin-owned parent whose `cwd` is the
+  memory root; the parent has no model turns and joins no business preset. It waits without
+  consuming input when that parent or a capable fresh provider is unavailable. Agent failures
+  record `phase2Error` and retry on the next scheduled
   window or manually.
 
 ### Incremental extraction
@@ -141,6 +144,9 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
   `memory_list`, `memory_read`, and `memory_search`, excluding shell, web, general filesystem,
   `memory_add`, and recursive delegation tools. Its only write-shaped capability is the scoped
   structured result, which the parent validates before two fixed-path atomic writes.
+- The Phase 2 parent is a dedicated top-level session titled `长期记忆（后台整合）`, restored by
+  its KV-persisted identity. Its workspace is the memory root and it deliberately joins no agent
+  preset, preventing unrelated workspace instructions from shaping consolidation.
 - The consolidation prompt demands the exact `v1` first line and the plugin enforces it
   mechanically (`ensureSummaryV1`).
 - Each consolidation-agent request is bounded by `phase2MaxTokens` (default 65535, matching the
@@ -154,7 +160,7 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
 | Failure | Behavior |
 | --- | --- |
 | No model route | Pipeline skips with `skippedNoRoute`; no state damage; retried on next trigger |
-| No live root agent / capable fresh provider | Consolidation skips without changing cooldown or pending input |
+| Dedicated memory parent unavailable / capable fresh provider missing | Consolidation skips or records the parent startup error without consuming pending input |
 | Extraction call fails | Claim marked failed with backoff; `retryLimit` attempts, then parked |
 | Consolidation child fails or structured output is malformed | Raw memories preserved, `phase2Error` recorded, pending flag kept; child is disposed |
 | Process restart mid-extraction | Orphaned `running` claims recover as failed and retry |
@@ -165,8 +171,8 @@ Consumed notes are moved to `extensions/ad_hoc/archive/` after a successful cons
 
 The plugin reads session logs through the public query surface and writes only inside its own
 memory root. It does not modify session history, the deployment agent preset, or other plugins'
-storage. Extraction runs only for root (non-subagent) sessions; the plugin-created consolidation
-child is therefore never fed back into Phase 1. Model routing falls back to the deployment
+storage. Extraction runs only for business root sessions: subagents and the plugin-owned memory
+parent are explicitly excluded, so consolidation logs are never fed back into Phase 1. Model routing falls back to the deployment
 default model (`agentDefaultModel`) when no dedicated route is configured. The client page is a
 configuration and observation surface only; it does not gate any security boundary.
 

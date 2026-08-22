@@ -18,6 +18,7 @@ export { MemoryStateStore, type KvFacilityLike, type KvUnitLike } from './bookke
 export { CONSOLIDATION_LABEL, HarnessConsolidationAgent, READ_ONLY_MEMORY_TOOLS, type ConsolidationArtifacts, type ConsolidationRequest, type ConsolidatorReadiness, type AgentRequestRuntimeLike, type HarnessConsolidationAgentDeps, type Phase2Consolidator, type SubagentRuntimeLike, } from './consolidation-agent.js';
 export { MemoryFiles, ensureSummaryV1 } from './files.js';
 export { MemoryInjection, buildSectionText, GUIDE_ORDER, type SystemPromptRuntime } from './inject.js';
+export { MEMORY_PARENT_ID_PREFIX, MEMORY_PARENT_TITLE, MemoryParent, type AgentRegistryRuntimeLike, type MemoryParentHandleLike, } from './memory-parent.js';
 export { collectResponse, collectText, collectTextDetails, extractJsonObject, generateOptions, LlmCallError, parseCallArguments, parseFencedBlocks, PHASE1_REASONING, PHASE2_REASONING, pickBlock, resolveRoute, resolveStageRoute, stripFences, } from './llm.js';
 export type { CollectedCall, CollectedResponse, CollectedText, LlmRuntime, MemoryStageReasoning, ModelRoute } from './llm.js';
 export { defaultMemoryRoot, isWithin, resolveMemoryRoot, sanitizeSlug } from './paths.js';

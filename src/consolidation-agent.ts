@@ -144,7 +144,7 @@ export class HarnessConsolidationAgent implements Phase2Consolidator {
 
   async consolidate(request: ConsolidationRequest): Promise<ConsolidationArtifacts> {
     const parent = this.deps.parent()
-    if (parent === undefined) throw new Error('整合需要一个存活的 root agent 作为受限子 agent 的父级')
+    if (parent === undefined) throw new Error('整合需要插件专用的 memory parent 作为受限子 agent 的父级')
     const providerName = this.deps.providerName ?? DEFAULT_PROVIDER
     const provider = this.deps.subagents.getProvider(providerName)
     if (!supportsRestrictedRun(provider)) {

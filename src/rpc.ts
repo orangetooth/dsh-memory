@@ -64,6 +64,7 @@ export interface ModelEntry {
 export interface StatePayload {
   enabled: boolean
   root: string
+  memoryParentSessionId: string | null
   config: Config
   storage: 'ok' | 'unavailable'
   storageError: string
@@ -142,6 +143,7 @@ async function statePayload(deps: RpcDeps): Promise<StatePayload> {
   return {
     enabled: cfg.enabled,
     root: deps.files.root,
+    memoryParentSessionId: snapshot.memoryParentSessionId ?? null,
     config: cfg,
     storage: deps.state.storageAvailable ? 'ok' : 'unavailable',
     storageError: deps.state.storageError,

@@ -27,6 +27,7 @@ interface FailureEntry {
 interface StatePayload {
   enabled: boolean
   root: string
+  memoryParentSessionId?: string | null
   storage: 'ok' | 'unavailable'
   storageError: string
   route: { provider: string; model: string } | null
@@ -296,6 +297,12 @@ function MemorySettings(): React.ReactNode {
       el('div', { className: 'dm-row' },
         el('span', { className: 'dm-label' }, '记忆库：'),
         el('span', { className: 'dm-dimmed', style: { wordBreak: 'break-all' } }, payload.root)),
+      el('div', { className: 'dm-row' },
+        el('span', { className: 'dm-label' }, '记忆父会话：'),
+        el('span', { className: 'dm-dimmed', style: { wordBreak: 'break-all' } },
+          payload.memoryParentSessionId == null
+            ? '正在创建…'
+            : `长期记忆（后台整合） · ${payload.memoryParentSessionId}`)),
       el('div', { className: 'dm-grid' },
         stat('已处理会话', `${payload.counts.done} 条记忆 / ${payload.counts.noop} 跳过 / ${payload.counts.failed} 失败`),
         stat('会话回顾', `${payload.stats.rollouts} 份`),
